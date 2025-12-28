@@ -164,13 +164,28 @@ export class ClobFeed {
         const side = this.tokenSides.get(msg.asset_id) || 'YES';
         const priceYes = side === 'YES' ? rawPrice : (1 - rawPrice);
 
+        // precise logic:
+        // If Side = YES: BidYes = rawBid, AskYes = rawAsk
+        // If Side = NO:  BidYes = 1 - AskNo (rawAsk), AskYes = 1 - BidNo (rawBid)
+        let bestBidYes: number | undefined;
+        let bestAskYes: number | undefined;
+
+        if (side === 'YES') {
+            bestBidYes = bestBid;
+            bestAskYes = bestAsk;
+        } else {
+            // Side is NO
+            if (bestAsk !== undefined) bestBidYes = 1 - bestAsk; // Implied Bid
+            if (bestBid !== undefined) bestAskYes = 1 - bestBid; // Implied Ask
+        }
+
         const update: PriceUpdate = {
             marketId,
             tokenId: msg.asset_id,
             priceYes,
             priceNo: 1 - priceYes,
-            bestBidYes: side === 'YES' ? bestBid : undefined, // Bids for NO are Asks for YES ideally, but simpler to omit for now
-            bestAskYes: side === 'YES' ? bestAsk : undefined,
+            bestBidYes,
+            bestAskYes,
             timestamp: new Date(msg.timestamp)
         };
 
