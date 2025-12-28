@@ -145,12 +145,31 @@ export class RiskManager {
             };
         }
 
-        // 3. Check market exposure limit
+        // 3. Check market exposure limit - PROGRESSIVE based on price level
+        // Lower prices = lower conviction = less capital deployed
         const position = this.positions.get(order.marketId);
         const currentExposure = position
             ? (position.costBasisYes + position.costBasisNo)
             : 0;
-        const maxMarketExposure = config.bankroll * config.maxMarketExposurePct;
+
+        // Calculate progressive exposure limit based on current price
+        // Higher price = more conviction = more allowed exposure
+        const price = order.price;
+        let progressiveExposurePct: number;
+
+        if (price >= 0.90) {
+            progressiveExposurePct = 1.0;  // 100% at 90¢+
+        } else if (price >= 0.80) {
+            progressiveExposurePct = 0.80; // 80% at 80-90¢
+        } else if (price >= 0.70) {
+            progressiveExposurePct = 0.25; // 25% at 70-80¢
+        } else {
+            progressiveExposurePct = 0.10; // 10% at 60-70¢
+        }
+
+        // Max market exposure is bank's max exposure * progressive percentage
+        const baseMaxExposure = config.bankroll * config.maxMarketExposurePct;
+        const maxMarketExposure = baseMaxExposure * progressiveExposurePct;
 
         if (currentExposure + order.sizeUsdc > maxMarketExposure) {
             const remainingRoom = maxMarketExposure - currentExposure;
@@ -159,7 +178,7 @@ export class RiskManager {
                 return {
                     approved: false,
                     originalOrder: order,
-                    rejectionReason: `Max market exposure reached: $${currentExposure.toFixed(2)}/${maxMarketExposure.toFixed(2)}`
+                    rejectionReason: `Progressive exposure limit at ${(price * 100).toFixed(0)}¢: $${currentExposure.toFixed(2)}/${maxMarketExposure.toFixed(2)} (${(progressiveExposurePct * 100).toFixed(0)}% of max)`
                 };
             }
 
@@ -170,7 +189,7 @@ export class RiskManager {
                 shares: remainingRoom / order.price
             };
 
-            warnings.push(`Order size reduced to $${remainingRoom.toFixed(2)} due to market exposure limit`);
+            warnings.push(`Order reduced to $${remainingRoom.toFixed(2)} (progressive ${(progressiveExposurePct * 100).toFixed(0)}% limit at ${(price * 100).toFixed(0)}¢)`);
 
             return {
                 approved: true,

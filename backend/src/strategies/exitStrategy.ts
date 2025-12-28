@@ -205,7 +205,20 @@ export function shouldTakeProfit(
             };
         }
 
-        // Thesis stop - full exit
+        // IMMEDIATE STOP LOSS at -20% - no waiting for consensus break
+        const stopLossPct = -0.20;
+        if (profitPct <= stopLossPct) {
+            return {
+                shouldExit: true,
+                profitPct,
+                reason: `🛑 STOP LOSS: Down ${(profitPct * 100).toFixed(1)}% (threshold: ${(stopLossPct * 100).toFixed(0)}%). Selling immediately.`,
+                isProfit: false,
+                exitPct: 1.0,  // Full exit
+                isMoonBagExit: false
+            };
+        }
+
+        // Thesis stop (10min consensus break) - still useful for sideways losses
         if (consensusBreakConfirmed) {
             return {
                 shouldExit: true,
