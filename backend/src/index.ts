@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import axios from 'axios';
 import { configService } from './config/configService.js';
 import { systemLogger as logger } from './core/logger.js';
 import eventBus from './core/eventBus.js';
@@ -100,7 +101,7 @@ class TradingBot {
 
                 // Initialize market state if not exists
                 if (!this.marketStates.has(market.marketId)) {
-                    this.initializeMarketState(market.marketId);
+                    await this.initializeMarketState(market.marketId);
                 }
             }
 
@@ -157,7 +158,7 @@ class TradingBot {
                     for (const tokenId of market.clobTokenIds) {
                         this.tokenToMarket.set(tokenId, market.marketId);
                     }
-                    this.initializeMarketState(market.marketId);
+                    await this.initializeMarketState(market.marketId);
 
                     // Subscribe to new market
                     this.clobFeed.subscribe(market.marketId, market.clobTokenIds);
@@ -428,13 +429,40 @@ class TradingBot {
 
     /**
      * Initialize a new market state.
+     * 
+     * CRITICAL: Fetches live price from Gamma API to avoid defaulting to 0.5
      */
-    private initializeMarketState(marketId: string): void {
+    private async initializeMarketState(marketId: string): Promise<void> {
+        // Try to get live price from Gamma API
+        let priceYes = 0.5;
+        let priceNo = 0.5;
+
+        try {
+            const response = await axios.get(
+                `https://gamma-api.polymarket.com/markets/${marketId}`,
+                { timeout: 5000 }
+            );
+            const marketData = response.data;
+
+            if (marketData.outcomePrices) {
+                const prices = JSON.parse(marketData.outcomePrices);
+                const fetchedPriceYes = parseFloat(prices[0]);
+                const fetchedPriceNo = parseFloat(prices[1]);
+
+                if (!isNaN(fetchedPriceYes) && !isNaN(fetchedPriceNo)) {
+                    priceYes = fetchedPriceYes;
+                    priceNo = fetchedPriceNo;
+                }
+            }
+        } catch (error) {
+            // Use default 0.5, WebSocket will update it
+        }
+
         const state: MarketState = {
             marketId,
             regime: MarketRegime.MID_CONSENSUS,
-            lastPriceYes: 0.5,
-            lastPriceNo: 0.5,
+            lastPriceYes: priceYes,
+            lastPriceNo: priceNo,
             priceHistory: [],
             ladderFilled: [],
             exposureYes: 0,
@@ -446,6 +474,7 @@ class TradingBot {
         };
         this.marketStates.set(marketId, state);
     }
+
 
     /**
      * Update market state with new price.
@@ -472,16 +501,48 @@ class TradingBot {
 
     /**
      * Load persisted market states from database.
+     * 
+     * CRITICAL: Fetches live prices from Gamma API to avoid defaulting to 0.5
      */
     private async loadMarketStates(): Promise<void> {
-        const states = await this.prisma.marketState.findMany();
+        const states = await this.prisma.marketState.findMany({
+            include: { market: true }
+        });
 
         for (const dbState of states) {
+            // Try to get live price from Gamma API
+            let priceYes = 0.5;
+            let priceNo = 0.5;
+
+            if (dbState.market) {
+                try {
+                    const response = await axios.get(
+                        `https://gamma-api.polymarket.com/markets/${dbState.marketId}`,
+                        { timeout: 5000 }
+                    );
+                    const marketData = response.data;
+
+                    if (marketData.outcomePrices) {
+                        const prices = JSON.parse(marketData.outcomePrices);
+                        const fetchedPriceYes = parseFloat(prices[0]);
+                        const fetchedPriceNo = parseFloat(prices[1]);
+
+                        if (!isNaN(fetchedPriceYes) && !isNaN(fetchedPriceNo)) {
+                            priceYes = fetchedPriceYes;
+                            priceNo = fetchedPriceNo;
+                            logger.debug(`Loaded live price for ${dbState.marketId}: ${(priceYes * 100).toFixed(1)}¢`);
+                        }
+                    }
+                } catch (error) {
+                    logger.debug(`Failed to fetch live price for ${dbState.marketId} on startup`);
+                }
+            }
+
             const state: MarketState = {
                 marketId: dbState.marketId,
                 regime: dbState.regime as MarketRegime,
-                lastPriceYes: 0.5,
-                lastPriceNo: 0.5,
+                lastPriceYes: priceYes,
+                lastPriceNo: priceNo,
                 priceHistory: [],
                 ladderFilled: JSON.parse(dbState.ladderFilled),
                 exposureYes: 0,
@@ -506,6 +567,7 @@ class TradingBot {
 
         logger.info(`Loaded ${states.length} market states from database`);
     }
+
 
     /**
      * Persist market state to database.
@@ -553,18 +615,57 @@ class TradingBot {
 
     /**
      * Take a P&L snapshot.
+     * 
+     * CRITICAL: Uses Gamma API for accurate prices. In-memory prices may be stale or default to 0.5.
      */
     private async takePnlSnapshot(): Promise<void> {
-        const positions = await this.prisma.position.findMany();
+        const positions = await this.prisma.position.findMany({
+            include: { market: true }
+        });
 
-        // Build current prices map
+        // Build current prices map - PRIORITIZE live Gamma API prices
         const currentPrices = new Map<string, { yes: number; no: number }>();
-        for (const [marketId, state] of this.marketStates) {
-            currentPrices.set(marketId, {
-                yes: state.lastPriceYes,
-                no: state.lastPriceNo
-            });
-        }
+
+        // Fetch live prices from Gamma API for each position
+        await Promise.all(positions.map(async (position) => {
+            // Try Gamma API first
+            try {
+                const response = await axios.get(
+                    `https://gamma-api.polymarket.com/markets/${position.marketId}`,
+                    { timeout: 5000 }
+                );
+                const marketData = response.data;
+
+                if (marketData.outcomePrices) {
+                    const prices = JSON.parse(marketData.outcomePrices);
+                    const priceYes = parseFloat(prices[0]);
+                    const priceNo = parseFloat(prices[1]);
+
+                    if (!isNaN(priceYes) && !isNaN(priceNo) && priceYes > 0 && priceYes < 1) {
+                        currentPrices.set(position.marketId, { yes: priceYes, no: priceNo });
+
+                        // Also update in-memory state for consistency
+                        const state = this.marketStates.get(position.marketId);
+                        if (state) {
+                            state.lastPriceYes = priceYes;
+                            state.lastPriceNo = priceNo;
+                        }
+                        return;
+                    }
+                }
+            } catch (error) {
+                // Fall through to in-memory prices
+            }
+
+            // Fallback to in-memory state, but validate it's not the default 0.5
+            const state = this.marketStates.get(position.marketId);
+            if (state && !(state.lastPriceYes === 0.5 && state.lastPriceNo === 0.5)) {
+                currentPrices.set(position.marketId, {
+                    yes: state.lastPriceYes,
+                    no: state.lastPriceNo
+                });
+            }
+        }));
 
         // Calculate values
         let positionsValue = 0;
@@ -592,6 +693,22 @@ class TradingBot {
                         where: { marketId: position.marketId },
                         data: { unrealizedPnl: positionPnl }
                     })
+                );
+
+                // Also save price to history for dashboard consistency
+                positionUpdates.push(
+                    this.prisma.priceHistory.create({
+                        data: {
+                            marketId: position.marketId,
+                            priceYes: prices.yes,
+                            priceNo: prices.no,
+                            bestBidYes: prices.yes,
+                            bestAskYes: prices.yes,
+                            bestBidNo: prices.no,
+                            bestAskNo: prices.no,
+                            timestamp: new Date()
+                        }
+                    }).catch(() => { }) // Ignore errors
                 );
             }
             realizedPnl += position.realizedPnl;
@@ -623,6 +740,7 @@ class TradingBot {
             realizedPnl
         });
     }
+
 
     /**
      * Stop the bot gracefully.

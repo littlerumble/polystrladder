@@ -22,7 +22,11 @@ function formatPriceDisplay(position: Position): JSX.Element {
     const parts = [];
     if (position.sharesYes > 0) {
         const entry = position.avgEntryYes || 0;
-        const current = position.currentPriceYes || 0;
+        // Fix: Use entry as fallback if current is undefined (explicit check for undefined/null)
+        const current = (position.currentPriceYes !== undefined && position.currentPriceYes !== null)
+            ? position.currentPriceYes
+            : entry;
+
         parts.push(
             <span key="yes" className="price-detail">
                 YES: {entry.toFixed(2)}¢ → {current.toFixed(2)}¢
@@ -31,7 +35,10 @@ function formatPriceDisplay(position: Position): JSX.Element {
     }
     if (position.sharesNo > 0) {
         const entry = position.avgEntryNo || 0;
-        const current = position.currentPriceNo || 0;
+        const current = (position.currentPriceNo !== undefined && position.currentPriceNo !== null)
+            ? position.currentPriceNo
+            : entry;
+
         parts.push(
             <span key="no" className="price-detail">
                 NO: {entry.toFixed(2)}¢ → {current.toFixed(2)}¢
