@@ -261,6 +261,12 @@ class TradingBot {
                 const consensusCheck = exitStrategy.checkConsensusBreak(updatedState, update.priceYes);
                 updatedState = consensusCheck.updatedState;
 
+                // Get market for gameStartTime (for tighter stop loss during live games)
+                const market = await this.prisma.market.findUnique({
+                    where: { id: update.marketId },
+                    select: { gameStartTime: true }
+                });
+
                 // Check if we should exit (profit, moon bag exit, or thesis stop)
                 const exitCheck = exitStrategy.shouldTakeProfit(
                     position,
@@ -268,7 +274,8 @@ class TradingBot {
                     update.priceNo,
                     updatedState.consensusBreakConfirmed,
                     updatedState.moonBagActive,
-                    updatedState.moonBagPriceAtActivation
+                    updatedState.moonBagPriceAtActivation,
+                    market?.gameStartTime ?? undefined
                 );
 
                 if (exitCheck.shouldExit && tokenIdYes && tokenIdNo) {

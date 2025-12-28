@@ -105,6 +105,7 @@ export function checkMoonBagExit(
 
 /**
  * Check if a position should be exited.
+ * @param gameStartTime - When the match starts (for tighter stop loss during live games)
  */
 export function shouldTakeProfit(
     position: Position,
@@ -112,9 +113,13 @@ export function shouldTakeProfit(
     currentPriceNo: number,
     consensusBreakConfirmed: boolean = false,
     moonBagActive: boolean = false,
-    moonBagPriceAtActivation?: number
+    moonBagPriceAtActivation?: number,
+    gameStartTime?: Date
 ): ExitCheckResult {
     const takeProfitPct: number = Number(configService.get('takeProfitPct')) || 0.12;
+
+    // Determine if match is live (game has started)
+    const isLiveGame = gameStartTime && new Date() >= gameStartTime;
 
     // 1. RESOLUTION CHECK - Exit immediately if market is effectively resolved
     // If we hold YES and price > 0.95 (Win) or < 0.05 (Loss)
@@ -205,13 +210,16 @@ export function shouldTakeProfit(
             };
         }
 
-        // IMMEDIATE STOP LOSS at -20% - no waiting for consensus break
-        const stopLossPct = -0.20;
+        // IMMEDIATE STOP LOSS - tighter during live games
+        // Live games: -15% (faster volatility, cut losses quick)
+        // Pre-game:   -20% (more room for price discovery)
+        const stopLossPct = isLiveGame ? -0.15 : -0.20;
         if (profitPct <= stopLossPct) {
+            const gameStatus = isLiveGame ? '🔴 LIVE' : '⏳ PRE-GAME';
             return {
                 shouldExit: true,
                 profitPct,
-                reason: `🛑 STOP LOSS: Down ${(profitPct * 100).toFixed(1)}% (threshold: ${(stopLossPct * 100).toFixed(0)}%). Selling immediately.`,
+                reason: `🛑 STOP LOSS (${gameStatus}): Down ${(profitPct * 100).toFixed(1)}% (threshold: ${(stopLossPct * 100).toFixed(0)}%). Selling immediately.`,
                 isProfit: false,
                 exitPct: 1.0,  // Full exit
                 isMoonBagExit: false
