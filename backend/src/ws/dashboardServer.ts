@@ -92,8 +92,24 @@ export class DashboardServer {
 
             if (marketData.outcomePrices) {
                 const prices = JSON.parse(marketData.outcomePrices);
-                const priceYes = parseFloat(prices[0]);
-                const priceNo = parseFloat(prices[1]);
+                const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+
+                // CRITICAL: outcomePrices order matches outcomes order
+                // outcomes could be ["Yes", "No"] or ["No", "Yes"]
+                let priceYes: number;
+                let priceNo: number;
+
+                const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
+                const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
+
+                if (yesIndex !== -1 && noIndex !== -1) {
+                    priceYes = parseFloat(prices[yesIndex]);
+                    priceNo = parseFloat(prices[noIndex]);
+                } else {
+                    // Fallback: assume first is YES (standard Polymarket)
+                    priceYes = parseFloat(prices[0]);
+                    priceNo = parseFloat(prices[1]);
+                }
 
                 if (!isNaN(priceYes) && !isNaN(priceNo) && priceYes > 0 && priceYes < 1) {
                     // Persist to DB asynchronously

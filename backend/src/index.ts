@@ -527,8 +527,23 @@ class TradingBot {
 
             if (marketData.outcomePrices) {
                 const prices = JSON.parse(marketData.outcomePrices);
-                const fetchedPriceYes = parseFloat(prices[0]);
-                const fetchedPriceNo = parseFloat(prices[1]);
+                const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+
+                // CRITICAL: outcomePrices order matches outcomes order
+                // outcomes could be ["Yes", "No"] or ["No", "Yes"]
+                const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
+                const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
+
+                let fetchedPriceYes: number;
+                let fetchedPriceNo: number;
+
+                if (yesIndex !== -1 && noIndex !== -1) {
+                    fetchedPriceYes = parseFloat(prices[yesIndex]);
+                    fetchedPriceNo = parseFloat(prices[noIndex]);
+                } else {
+                    fetchedPriceYes = parseFloat(prices[0]);
+                    fetchedPriceNo = parseFloat(prices[1]);
+                }
 
                 if (!isNaN(fetchedPriceYes) && !isNaN(fetchedPriceNo)) {
                     priceYes = fetchedPriceYes;
@@ -617,8 +632,22 @@ class TradingBot {
 
                     if (marketData.outcomePrices) {
                         const prices = JSON.parse(marketData.outcomePrices);
-                        const fetchedPriceYes = parseFloat(prices[0]);
-                        const fetchedPriceNo = parseFloat(prices[1]);
+                        const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+
+                        // CRITICAL: outcomePrices order matches outcomes order
+                        const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
+                        const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
+
+                        let fetchedPriceYes: number;
+                        let fetchedPriceNo: number;
+
+                        if (yesIndex !== -1 && noIndex !== -1) {
+                            fetchedPriceYes = parseFloat(prices[yesIndex]);
+                            fetchedPriceNo = parseFloat(prices[noIndex]);
+                        } else {
+                            fetchedPriceYes = parseFloat(prices[0]);
+                            fetchedPriceNo = parseFloat(prices[1]);
+                        }
 
                         if (!isNaN(fetchedPriceYes) && !isNaN(fetchedPriceNo)) {
                             priceYes = fetchedPriceYes;
