@@ -296,28 +296,54 @@ export class DashboardServer {
                         priceNo = livePrice.priceNo;
                     }
 
-                    // Determine entry cue based on price
+                    // Determine entry cue based on BOTH YES and NO prices
                     let entryCue = '';
-                    if (priceYes < firstLadder) {
-                        const needed = ((firstLadder - priceYes) * 100).toFixed(1);
-                        entryCue = `Need +${needed}% to enter (first buy at ${(firstLadder * 100).toFixed(0)}%)`;
-                    } else if (priceYes > maxBuyPrice) {
-                        entryCue = `Too high (>${(maxBuyPrice * 100).toFixed(0)}%) - No entry`;
-                    } else {
-                        // Find how many ladder levels we can fill at current price
+                    let tradeSide = '';
+
+                    // Check if YES is tradeable
+                    if (priceYes >= firstLadder && priceYes <= maxBuyPrice) {
+                        tradeSide = 'YES';
                         const levelsToFill = ladderLevels.filter(l => priceYes >= l);
                         const filledCount = marketState ? JSON.parse(marketState.ladderFilled || '[]').length : 0;
                         const unfilled = levelsToFill.length - filledCount;
 
                         if (unfilled > 0) {
-                            // We can fill more levels now
-                            entryCue = `Ready to buy L${filledCount + 1}${unfilled > 1 ? `-L${filledCount + unfilled}` : ''} now`;
+                            entryCue = `🟢 YES: Buy L${filledCount + 1}${unfilled > 1 ? `-L${filledCount + unfilled}` : ''} now`;
                         } else if (filledCount < ladderLevels.length) {
-                            // All passed levels filled, wait for next
                             const nextLevel = ladderLevels[filledCount];
-                            entryCue = `L${filledCount}/${ladderLevels.length} filled, next at ${(nextLevel * 100).toFixed(0)}%`;
+                            entryCue = `YES: L${filledCount}/${ladderLevels.length} filled, next at ${(nextLevel * 100).toFixed(0)}%`;
                         } else {
-                            entryCue = `All ${ladderLevels.length} levels filled ✓`;
+                            entryCue = `YES: All ${ladderLevels.length} levels filled ✓`;
+                        }
+                    }
+                    // Check if NO is tradeable (when YES is not)
+                    else if (priceNo >= firstLadder && priceNo <= maxBuyPrice) {
+                        tradeSide = 'NO';
+                        const levelsToFill = ladderLevels.filter(l => priceNo >= l);
+                        const filledCount = marketState ? JSON.parse(marketState.ladderFilled || '[]').length : 0;
+                        const unfilled = levelsToFill.length - filledCount;
+
+                        if (unfilled > 0) {
+                            entryCue = `🔴 NO: Buy L${filledCount + 1}${unfilled > 1 ? `-L${filledCount + unfilled}` : ''} now`;
+                        } else if (filledCount < ladderLevels.length) {
+                            const nextLevel = ladderLevels[filledCount];
+                            entryCue = `NO: L${filledCount}/${ladderLevels.length} filled, next at ${(nextLevel * 100).toFixed(0)}%`;
+                        } else {
+                            entryCue = `NO: All ${ladderLevels.length} levels filled ✓`;
+                        }
+                    }
+                    // Neither side is tradeable
+                    else {
+                        tradeSide = 'WAIT';
+                        // Show which side is closer to entry
+                        const yesNeeded = firstLadder - priceYes;
+                        const noNeeded = firstLadder - priceNo;
+                        if (yesNeeded < noNeeded && yesNeeded > 0) {
+                            entryCue = `Wait: YES needs +${(yesNeeded * 100).toFixed(1)}%`;
+                        } else if (noNeeded > 0) {
+                            entryCue = `Wait: NO needs +${(noNeeded * 100).toFixed(1)}%`;
+                        } else {
+                            entryCue = `Both sides > ${(maxBuyPrice * 100).toFixed(0)}%`;
                         }
                     }
 
@@ -325,7 +351,8 @@ export class DashboardServer {
                         ...market,
                         priceYes,
                         priceNo,
-                        pricePct: `${(priceYes * 100).toFixed(1)}%`,
+                        pricePct: `Y: ${(priceYes * 100).toFixed(0)}% | N: ${(priceNo * 100).toFixed(0)}%`,
+                        tradeSide,
                         entryCue,
                         regime: marketState?.regime || 'UNKNOWN'
                     };
