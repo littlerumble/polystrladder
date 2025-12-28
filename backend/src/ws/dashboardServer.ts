@@ -195,24 +195,33 @@ export class DashboardServer {
             let priceNo = 0;
             let priceFound = false;
 
-            // 1. Try DB History (Fastest)
+            // 1. Try DB History ONLY if recent (< 1 minute old)
             const latestPrice = await this.prisma.priceHistory.findFirst({
                 where: { marketId: pos.marketId },
                 orderBy: { timestamp: 'desc' }
             });
 
-            if (latestPrice) {
+            const priceAge = latestPrice ? Date.now() - latestPrice.timestamp.getTime() : Infinity;
+            const isRecent = priceAge < 60000; // 1 minute
+
+            if (latestPrice && isRecent) {
                 priceYes = latestPrice.priceYes;
                 priceNo = latestPrice.priceNo;
                 priceFound = true;
             }
-            // 2. Fallback: Ask the Web (CLOB API)
+            // 2. ALWAYS try Gamma API if DB is old or missing
             else if (pos.market) {
                 const livePrice = await this.fetchLivePrice(pos.market);
                 if (livePrice) {
                     priceYes = livePrice.priceYes;
                     priceNo = livePrice.priceNo;
                     priceFound = true;
+                } else if (latestPrice) {
+                    // Fallback to old DB price if Gamma fails
+                    priceYes = latestPrice.priceYes;
+                    priceNo = latestPrice.priceNo;
+                    priceFound = true;
+                    logger.warn(`Using stale price for ${pos.marketId}, age: ${Math.round(priceAge / 1000)}s`);
                 }
             }
 
