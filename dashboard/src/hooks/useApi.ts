@@ -9,6 +9,7 @@ export interface Market {
     question: string;
     category: string;
     endDate: string;
+    gameStartTime?: string; // When the match/event actually starts
     volume24h: number;
     liquidity: number;
 }

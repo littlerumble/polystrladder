@@ -221,6 +221,20 @@ export default function DecisionPanel({ positions, marketStates }: DecisionPanel
                                     {formatPriceDisplay(position)}
                                 </div>
 
+                                {position.market?.gameStartTime && (
+                                    <div className="detail-row">
+                                        <span className="detail-label">Game Starts:</span>
+                                        <span className="detail-value game-time">
+                                            {new Date(position.market.gameStartTime).toLocaleString(undefined, {
+                                                month: 'short',
+                                                day: 'numeric',
+                                                hour: 'numeric',
+                                                minute: '2-digit'
+                                            })}
+                                        </span>
+                                    </div>
+                                )}
+
                                 {status.progress !== undefined && (
                                     <div className="detail-row progress-row">
                                         <span className="detail-label">Profit Target:</span>

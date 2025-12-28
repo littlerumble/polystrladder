@@ -62,6 +62,7 @@ export interface MarketData {
     category: string;
     subcategory?: string;
     endDate: Date;
+    gameStartTime?: Date; // When the match/event actually starts
     volume24h: number;
     liquidity: number;
     outcomes: string[];

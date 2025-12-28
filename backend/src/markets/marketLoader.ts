@@ -14,6 +14,7 @@ interface GammaMarket {
     category?: string;
     subcategory?: string;
     endDate?: string;
+    gameStartTime?: string; // When the match/event actually starts
     volume24hr?: number;
     liquidityNum?: number;
     liquidity?: string;
@@ -184,6 +185,7 @@ export class MarketLoader {
             category: market.category || market.events?.[0]?.category || 'Unknown',
             subcategory: market.subcategory || market.events?.[0]?.subcategory,
             endDate: new Date(market.endDate || Date.now()),
+            gameStartTime: market.gameStartTime ? new Date(market.gameStartTime) : undefined,
             volume24h: market.volume24hr || 0,
             liquidity: market.liquidityNum || parseFloat(market.liquidity || '0') || 0,
             outcomes,
@@ -221,6 +223,7 @@ export class MarketLoader {
                     category: market.category,
                     subcategory: market.subcategory,
                     endDate: market.endDate,
+                    gameStartTime: market.gameStartTime,
                     volume24h: market.volume24h,
                     liquidity: market.liquidity,
                     outcomes: JSON.stringify(market.outcomes),
@@ -235,6 +238,7 @@ export class MarketLoader {
                     category: market.category,
                     subcategory: market.subcategory,
                     endDate: market.endDate,
+                    gameStartTime: market.gameStartTime,
                     volume24h: market.volume24h,
                     liquidity: market.liquidity,
                     outcomes: JSON.stringify(market.outcomes),
