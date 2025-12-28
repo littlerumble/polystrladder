@@ -202,7 +202,12 @@ export class RiskManager {
             position.avgEntryNo = newCostBasis / newTotalShares;
         }
 
-        this.positions.set(order.marketId, position);
+        if (position.sharesYes <= 0 && position.sharesNo <= 0) {
+            this.positions.delete(order.marketId);
+            logger.info('Position closed and removed from tracking', { marketId: order.marketId });
+        } else {
+            this.positions.set(order.marketId, position);
+        }
 
         // Record order timestamp for frequency limiting
         const timestamps = this.recentOrders.get(order.marketId) || [];

@@ -130,6 +130,7 @@ export interface Order {
     shares: number;
     strategy: StrategyType;
     strategyDetail?: string;
+    isExit?: boolean;
     timestamp: Date;
 }
 

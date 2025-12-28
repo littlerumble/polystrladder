@@ -22,7 +22,7 @@ export interface ExitConfig {
 }
 
 const DEFAULT_EXIT_CONFIG: ExitConfig = {
-    takeProfitPct: 0.20,        // Take profit at 20% gain
+    takeProfitPct: 0.08,        // Take profit at 8% gain
     minHoldTimeMs: 5 * 60 * 1000  // Hold for at least 5 minutes
 };
 

@@ -19,6 +19,7 @@ import { classifyRegime, isSignificantTransition } from './markets/regimeClassif
 import { ClobFeed } from './ws/clobFeed.js';
 import { DashboardServer } from './ws/dashboardServer.js';
 import { selectStrategy, shouldConsiderTailInsurance } from './strategies/strategySelector.js';
+import exitStrategy from './strategies/exitStrategy.js';
 import { generateLadderOrders, markLadderFilled } from './strategies/ladder.js';
 import { generateVolatilityOrders } from './strategies/volatility.js';
 import { generateTailInsuranceOrder, markTailActive } from './strategies/tail.js';
@@ -239,6 +240,29 @@ class TradingBot {
             }
         }
 
+        // 6. Check for Profit Taking
+        // We do this BEFORE regular strategy execution to prioritize locking in gains
+        const position = this.riskManager.getPosition(update.marketId);
+        if (position) {
+            const profitCheck = exitStrategy.shouldTakeProfit(
+                position,
+                update.priceYes,
+                update.priceNo
+            );
+
+            if (profitCheck.shouldExit && tokenIdYes) {
+                const exitOrder = exitStrategy.generateExitOrder(updatedState, position, tokenIdYes);
+                if (exitOrder) {
+                    logger.info('Taking profit', {
+                        marketId: update.marketId,
+                        profitPct: profitCheck.profitPct,
+                        reason: profitCheck.reason
+                    });
+                    proposedOrders.push(exitOrder);
+                }
+            }
+        }
+
         // 6. Apply risk checks and execute
         for (const proposed of proposedOrders) {
             const riskResult = this.riskManager.checkOrder(proposed);
@@ -263,6 +287,7 @@ class TradingBot {
                 shares: orderToExecute.shares,
                 strategy: orderToExecute.strategy,
                 strategyDetail: orderToExecute.strategyDetail,
+                isExit: orderToExecute.isExit,
                 timestamp: new Date()
             };
 
@@ -305,6 +330,42 @@ class TradingBot {
                         })
                     }
                 });
+            }
+
+
+            // If this was a full exit, clean up the market to free space
+            // We check if position is now empty/closed in RiskManager (which we just updated above)
+            // But RiskManager logic might be async or we just want to be sure here
+            if (order.isExit && result.success) {
+                const remainingPos = this.riskManager.getPosition(order.marketId);
+                // If no remaining position (it was deleted or shares are 0), we unsubscribe
+                if (!remainingPos || (remainingPos.sharesYes <= 0 && remainingPos.sharesNo <= 0)) {
+                    logger.info('Profit taken and position closed. Unsubscribing to free up slot.', {
+                        marketId: order.marketId
+                    });
+
+                    // Unsubscribe from WebSocket
+                    const tokens = this.marketTokens.get(order.marketId) || [];
+                    if (tokens.length > 0) {
+                        this.clobFeed.unsubscribe(order.marketId, tokens);
+                    }
+
+                    // Clear from local state maps to stop processing
+                    // We keep the marketState in DB/Map for history/reference but stop active tracking
+                    // or maybe we should remove it from marketStates to save memory? 
+                    // Let's remove it from active processing maps.
+                    this.marketTokens.delete(order.marketId);
+                    // Note: We don't delete from tokenToMarket immediately or strictly necessary 
+                    // unless we want to absolutely prevent any stray messages. 
+                    // But `marketTokens.delete` prevents `handlePriceUpdate` from finding tokens later if we used it.
+                    // Actually `handlePriceUpdate` uses `marketStates`.
+                    this.marketStates.delete(order.marketId);
+
+                    // Also removing from tokenToMarket to be clean
+                    for (const t of tokens) {
+                        this.tokenToMarket.delete(t);
+                    }
+                }
             }
         }
 
