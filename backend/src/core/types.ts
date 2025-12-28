@@ -106,8 +106,12 @@ export interface MarketState {
     consensusBreakConfirmed: boolean; // True if break held for required duration
 
     // Moon bag tracking
-    moonBagActive: boolean;           // True after taking 75% profit
+    moonBagActive: boolean;           // True after taking 60% profit
     moonBagPriceAtActivation?: number; // Price when moon bag was created
+
+    // Pre-game stop loss cooldown (exit at 60%, re-enter at 70% after 10 min)
+    stopLossTriggeredAt?: Date;       // When pre-game stop loss fired (price < 60%)
+    cooldownUntil?: Date;             // When re-entry is allowed (stopLoss + 10 min)
 }
 
 /**

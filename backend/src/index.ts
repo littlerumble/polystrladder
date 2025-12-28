@@ -270,19 +270,42 @@ class TradingBot {
                 proposedOrders.push(...dcaOrders);
             }
 
-            // 6. Check for Profit Taking, Moon Bag Exit, or Thesis-Based Stop Loss
+            // 6. Check for Pre-game Stop Loss FIRST (exit at 60%, 10 min cooldown)
             // We do this BEFORE regular strategy execution to prioritize exits
             const position = this.riskManager.getPosition(update.marketId);
             if (position) {
+                // Check pre-game stop loss (exit if < 60% before match)
+                const preGameCheck = exitStrategy.checkPreGameStopLoss(
+                    updatedState,
+                    update.priceYes,
+                    true, // hasPosition
+                    market?.endDate  // Use endDate as game start time
+                );
+                updatedState = preGameCheck.updatedState;
+
+                if (preGameCheck.shouldExit && tokenIdYes && tokenIdNo) {
+                    const exitOrder = exitStrategy.generateExitOrder(
+                        updatedState,
+                        position,
+                        tokenIdYes,
+                        tokenIdNo,
+                        1.0  // Full exit for pre-game stop loss
+                    );
+                    if (exitOrder) {
+                        logger.info('🛑 PRE-GAME STOP LOSS EXIT', {
+                            marketId: update.marketId,
+                            reason: preGameCheck.reason
+                        });
+                        proposedOrders = [exitOrder];
+                        // Persist updated state with cooldown
+                        await this.persistMarketState(updatedState);
+                        this.marketStates.set(update.marketId, updatedState);
+                    }
+                }
+
                 // First, check and track consensus break state
                 const consensusCheck = exitStrategy.checkConsensusBreak(updatedState, update.priceYes);
                 updatedState = consensusCheck.updatedState;
-
-                // Get market for gameStartTime (for tighter stop loss during live games)
-                const market = await this.prisma.market.findUnique({
-                    where: { id: update.marketId },
-                    select: { gameStartTime: true }
-                });
 
                 // Check if we should exit (profit, moon bag exit, or thesis stop)
                 const exitCheck = exitStrategy.shouldTakeProfit(
@@ -292,7 +315,7 @@ class TradingBot {
                     updatedState.consensusBreakConfirmed,
                     updatedState.moonBagActive,
                     updatedState.moonBagPriceAtActivation,
-                    market?.gameStartTime ?? undefined
+                    market?.endDate  // Use endDate instead of gameStartTime
                 );
 
                 if (exitCheck.shouldExit && tokenIdYes && tokenIdNo) {
@@ -648,6 +671,8 @@ class TradingBot {
                 regime: state.regime,
                 ladderFilled: JSON.stringify(state.ladderFilled),
                 tailActive: state.tailActive,
+                stopLossTriggeredAt: state.stopLossTriggeredAt || null,
+                cooldownUntil: state.cooldownUntil || null,
                 lastProcessed
             },
             create: {
@@ -655,6 +680,8 @@ class TradingBot {
                 regime: state.regime,
                 ladderFilled: JSON.stringify(state.ladderFilled),
                 tailActive: state.tailActive,
+                stopLossTriggeredAt: state.stopLossTriggeredAt || null,
+                cooldownUntil: state.cooldownUntil || null,
                 lastProcessed
             }
         });

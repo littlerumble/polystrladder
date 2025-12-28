@@ -82,25 +82,94 @@ export function checkConsensusBreak(
 }
 
 /**
- * Check if moon bag should be exited (price dropped from activation).
+ * Check if moon bag should be exited (price dropped below 65%).
  */
 export function checkMoonBagExit(
     state: MarketState,
     currentPriceYes: number
 ): { shouldExit: boolean; reason: string } {
-    if (!state.moonBagActive || !state.moonBagPriceAtActivation) {
+    if (!state.moonBagActive) {
         return { shouldExit: false, reason: '' };
     }
 
-    // If price dropped AT ALL from moon bag activation, exit
-    if (currentPriceYes < state.moonBagPriceAtActivation) {
+    // Moon bag exits if price drops below 65% (first ladder level)
+    const MOON_BAG_EXIT_THRESHOLD = 0.65;
+    if (currentPriceYes < MOON_BAG_EXIT_THRESHOLD) {
         return {
             shouldExit: true,
-            reason: `Moon bag price dropped: ${currentPriceYes.toFixed(3)} < ${state.moonBagPriceAtActivation.toFixed(3)} (activation price)`
+            reason: `Moon bag exit: price ${(currentPriceYes * 100).toFixed(1)}% < 65% threshold`
         };
     }
 
     return { shouldExit: false, reason: '' };
+}
+
+/**
+ * Pre-game stop loss check.
+ * - If price drops below 60% (first ladder): EXIT immediately
+ * - After exit: 10 minute cooldown before re-entry is allowed
+ * - Re-entry only allowed at 70%+ (L2)
+ * 
+ * @param gameStartTime - When the match starts
+ * @returns Updated state and whether to exit
+ */
+export function checkPreGameStopLoss(
+    state: MarketState,
+    currentPriceYes: number,
+    hasPosition: boolean,
+    gameStartTime?: Date
+): { shouldExit: boolean; updatedState: MarketState; reason: string } {
+    const ladderLevels: number[] = configService.get('ladderLevels') || [0.60, 0.70, 0.80, 0.90, 0.95];
+    const firstLadder = ladderLevels[0] || 0.60;
+    const secondLadder = ladderLevels[1] || 0.70;
+    const COOLDOWN_MINUTES = 10;
+
+    let updatedState = { ...state };
+    const now = new Date();
+
+    // Only apply pre-game (before match starts)
+    const isPreGame = !gameStartTime || now < gameStartTime;
+    if (!isPreGame) {
+        return { shouldExit: false, updatedState, reason: 'Game is live - using regular stop loss' };
+    }
+
+    // Check if in cooldown
+    if (state.cooldownUntil && now < state.cooldownUntil) {
+        // In cooldown period - check if price recovered enough (70%+) to allow re-entry
+        if (currentPriceYes >= secondLadder) {
+            logger.info('📈 Cooldown: Price recovered to L2 (' + (currentPriceYes * 100).toFixed(1) + '%), re-entry will be allowed after cooldown expires');
+        }
+        return {
+            shouldExit: false,
+            updatedState,
+            reason: `In cooldown until ${state.cooldownUntil.toISOString().slice(11, 19)} - no trading`
+        };
+    }
+
+    // Check if price is below first ladder (60%)
+    if (currentPriceYes < firstLadder && hasPosition) {
+        // STOP LOSS TRIGGERED
+        updatedState.stopLossTriggeredAt = now;
+        updatedState.cooldownUntil = new Date(now.getTime() + COOLDOWN_MINUTES * 60 * 1000);
+
+        // Clear ladder filled so we can re-enter at L2 after cooldown
+        updatedState.ladderFilled = [];
+
+        logger.info('🛑 PRE-GAME STOP LOSS triggered', {
+            marketId: state.marketId,
+            price: (currentPriceYes * 100).toFixed(1) + '%',
+            firstLadder: (firstLadder * 100).toFixed(0) + '%',
+            cooldownUntil: updatedState.cooldownUntil.toISOString()
+        });
+
+        return {
+            shouldExit: true,
+            updatedState,
+            reason: `PRE-GAME STOP: Price ${(currentPriceYes * 100).toFixed(1)}% < ${(firstLadder * 100).toFixed(0)}% (first ladder). Cooldown for ${COOLDOWN_MINUTES} min.`
+        };
+    }
+
+    return { shouldExit: false, updatedState, reason: '' };
 }
 
 /**
@@ -326,4 +395,4 @@ export function generateExitOrder(
     return order;
 }
 
-export default { shouldTakeProfit, generateExitOrder, checkConsensusBreak, checkMoonBagExit };
+export default { shouldTakeProfit, generateExitOrder, checkConsensusBreak, checkMoonBagExit, checkPreGameStopLoss };
