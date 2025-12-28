@@ -560,9 +560,25 @@ class TradingBot {
                 }
             }
 
+            // CRITICAL FIX: Recalculate regime from live price, NOT the stale DB value!
+            // Giants at 92.5% was showing EARLY_UNCERTAIN because DB had old regime.
+            let calculatedRegime: MarketRegime;
+            if (priceYes >= 0.45 && priceYes <= 0.55) {
+                calculatedRegime = MarketRegime.EARLY_UNCERTAIN;
+            } else if (priceYes >= 0.85) {
+                calculatedRegime = MarketRegime.LATE_COMPRESSED;
+            } else {
+                calculatedRegime = MarketRegime.MID_CONSENSUS;
+            }
+
+            // Log if regime changed from DB
+            if (calculatedRegime !== dbState.regime) {
+                logger.info(`Regime recalculated for ${dbState.marketId}: ${dbState.regime} -> ${calculatedRegime} (price: ${(priceYes * 100).toFixed(1)}%)`);
+            }
+
             const state: MarketState = {
                 marketId: dbState.marketId,
-                regime: dbState.regime as MarketRegime,
+                regime: calculatedRegime,  // Use recalculated, not DB value
                 lastPriceYes: priceYes,
                 lastPriceNo: priceNo,
                 priceHistory: [],
@@ -585,6 +601,9 @@ class TradingBot {
             }
 
             this.marketStates.set(dbState.marketId, state);
+
+            // Persist the corrected regime to DB
+            await this.persistMarketState(state);
         }
 
         logger.info(`Loaded ${states.length} market states from database`);
