@@ -124,6 +124,7 @@ class TradingBot {
             this.marketLoader.startPeriodicRefresh();
             this.startPnlSnapshots();
             this.startResolutionChecks();
+            this.startGammaPricePolling(); // CRITICAL: Use Gamma prices, not garbage CLOB prices
 
             this.isRunning = true;
             eventBus.emit('system:ready');
@@ -654,6 +655,77 @@ class TradingBot {
     }
 
     /**
+     * Start periodic Gamma API price polling.
+     * CRITICAL: CLOB WebSocket sends garbage prices (0.50) from bad bid/ask spreads.
+     * We need to poll Gamma API every 30s to get accurate prices for trading decisions.
+     */
+    private gammaPriceInterval: NodeJS.Timeout | null = null;
+
+    private startGammaPricePolling(): void {
+        const pollInterval = 2000; // 2 seconds for accurate trading
+
+        this.gammaPriceInterval = setInterval(async () => {
+            try {
+                await this.pollGammaPrices();
+            } catch (error) {
+                logger.error('Failed to poll Gamma prices', { error: String(error) });
+            }
+        }, pollInterval);
+
+        // Run immediately on startup
+        this.pollGammaPrices().catch(err => {
+            logger.error('Initial Gamma price poll failed', { error: String(err) });
+        });
+
+        logger.info('Started Gamma price polling every 2s (replaces garbage CLOB prices)');
+    }
+
+    /**
+     * Poll Gamma API for accurate prices and update market states.
+     */
+    private async pollGammaPrices(): Promise<void> {
+        const marketIds = Array.from(this.marketStates.keys());
+
+        for (const marketId of marketIds) {
+            try {
+                const response = await axios.get(
+                    `https://gamma-api.polymarket.com/markets/${marketId}`,
+                    { timeout: 5000 }
+                );
+
+                const marketData = response.data;
+                if (!marketData.outcomePrices) continue;
+
+                const prices = JSON.parse(marketData.outcomePrices);
+                const priceYes = parseFloat(prices[0]);
+                const priceNo = parseFloat(prices[1]);
+
+                if (isNaN(priceYes) || isNaN(priceNo)) continue;
+
+                // Update the in-memory market state with accurate Gamma prices
+                const state = this.marketStates.get(marketId);
+                if (state) {
+                    const tokenIds = this.marketTokens.get(marketId) || [];
+
+                    // Create a synthetic price update with Gamma data
+                    const update: PriceUpdate = {
+                        marketId,
+                        tokenId: tokenIds[0] || marketId,
+                        priceYes,
+                        priceNo,
+                        timestamp: new Date()
+                    };
+
+                    // Process through the regular trading loop
+                    await this.handlePriceUpdate(update);
+                }
+            } catch (error) {
+                // Silently skip failed fetches - market might be resolved or API error
+            }
+        }
+    }
+
+    /**
      * Check if any markets with positions have been resolved.
      * If a market is closed, settle the position based on the resolution.
      */
@@ -936,6 +1008,9 @@ class TradingBot {
         }
         if (this.resolutionCheckInterval) {
             clearInterval(this.resolutionCheckInterval);
+        }
+        if (this.gammaPriceInterval) {
+            clearInterval(this.gammaPriceInterval);
         }
         this.marketLoader.stopPeriodicRefresh();
 
