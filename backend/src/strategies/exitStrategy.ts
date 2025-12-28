@@ -171,9 +171,11 @@ export function shouldTakeProfit(
         }
     }
 
-    // Check for moon bag exit first (price dropped)
-    if (moonBagActive && moonBagPriceAtActivation) {
-        if (currentPriceYes < moonBagPriceAtActivation) {
+    // Check for moon bag exit - only sell if price drops below 65% (first ladder level)
+    // This is a clear threshold: if thesis is valid, price should stay above 65%
+    const MOON_BAG_EXIT_THRESHOLD = 0.65;
+    if (moonBagActive) {
+        if (currentPriceYes < MOON_BAG_EXIT_THRESHOLD) {
             const costBasis = position.costBasisYes;
             const currentValue = position.sharesYes * currentPriceYes;
             const profitPct = costBasis > 0 ? (currentValue - costBasis) / costBasis : 0;
@@ -181,14 +183,14 @@ export function shouldTakeProfit(
             return {
                 shouldExit: true,
                 profitPct,
-                reason: `🌙 MOON BAG EXIT: Price dropped from ${moonBagPriceAtActivation.toFixed(3)} to ${currentPriceYes.toFixed(3)}`,
+                reason: `🌙 MOON BAG EXIT: Price ${(currentPriceYes * 100).toFixed(1)}% dropped below 65% threshold`,
                 isProfit: profitPct > 0,
                 exitPct: 1.0,  // Full exit of remaining moon bag
                 isMoonBagExit: true
             };
         }
-        // Moon bag active and price is UP - hold until resolution
-        return { shouldExit: false, profitPct: 0, reason: 'Moon bag holding - price up', isProfit: false, exitPct: 0, isMoonBagExit: false };
+        // Moon bag active and price is above 65% - hold until resolution
+        return { shouldExit: false, profitPct: 0, reason: 'Moon bag holding - price above 65%', isProfit: false, exitPct: 0, isMoonBagExit: false };
     }
 
     // Check YES position for initial profit taking
@@ -198,14 +200,14 @@ export function shouldTakeProfit(
         const unrealizedProfit = currentValue - costBasis;
         const profitPct = unrealizedProfit / costBasis;
 
-        // Profit taking - sell 75%, keep 25% moon bag
+        // Profit taking - sell 60%, keep 40% moon bag for more upside
         if (profitPct >= takeProfitPct && !moonBagActive) {
             return {
                 shouldExit: true,
                 profitPct,
-                reason: `Profit target reached: ${(profitPct * 100).toFixed(1)}% >= ${(takeProfitPct * 100).toFixed(1)}% - Selling 75%, keeping 25% moon bag`,
+                reason: `Profit target reached: ${(profitPct * 100).toFixed(1)}% >= ${(takeProfitPct * 100).toFixed(1)}% - Selling 60%, keeping 40% moon bag`,
                 isProfit: true,
-                exitPct: 0.75,  // Partial exit
+                exitPct: 0.60,  // Sell 60%, keep 40% moon bag
                 isMoonBagExit: false
             };
         }
