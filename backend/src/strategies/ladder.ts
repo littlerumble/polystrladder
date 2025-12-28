@@ -3,19 +3,33 @@ import { configService } from '../config/configService.js';
 import { strategyLogger as logger } from '../core/logger.js';
 
 /**
- * Ladder Compression Strategy
+ * Ladder Compression Strategy - Confidence-Tiered Entries
  * 
- * Logic:
- * 1. Iterate configured ladder levels [0.74, 0.81, 0.90, 0.92, 0.97]
- * 2. For each unfilled level where current price >= ladder level:
- *    - Propose a buy order sized as: size = (bankroll * maxExposure) / ladderLevel
- * 3. Mark level as filled after execution
+ * Philosophy:
+ * - Minimal exposure early (when consensus is weak)
+ * - Real size only after 60%+ (consensus forming)
+ * - Heavy size after 75%+ (strong consensus)
+ * 
+ * Ladder Levels (configurable):
+ * - Level 1: 60% → Small position (10% of max exposure)
+ * - Level 2: 65% → Small position (15% of max exposure)
+ * - Level 3: 70% → Medium position (25% of max exposure)
+ * - Level 4: 75% → Large position (25% of max exposure)
+ * - Level 5: 80% → Large position (25% of max exposure)
+ * 
+ * Total: 100% of max exposure spread across levels
  * 
  * Why it works:
- * - Exposure grows only as certainty grows
- * - Average entry is controlled
- * - No timing risk
+ * - No exposure in uncertain markets (55% and below)
+ * - Exposure grows ONLY as consensus grows
+ * - Heaviest size when confidence is highest
+ * - Average entry reflects conviction, not timing
  */
+
+// Confidence weights for each ladder level (must sum to 1.0)
+// Lower levels = less capital, higher levels = more capital
+const CONFIDENCE_WEIGHTS = [0.10, 0.15, 0.25, 0.25, 0.25];
+
 export function generateLadderOrders(
     state: MarketState,
     tokenIdYes: string
@@ -23,10 +37,10 @@ export function generateLadderOrders(
     const config = configService.getAll();
     const orders: ProposedOrder[] = [];
 
-    const ladderLevels = config.ladderLevels;
+    const ladderLevels: number[] = config.ladderLevels;
     const maxExposure = config.bankroll * config.maxMarketExposurePct;
     const priceYes = state.lastPriceYes;
-    const maxBuyPrice = config.maxBuyPrice || 0.80;
+    const maxBuyPrice = config.maxBuyPrice || 0.85;
 
     // Don't buy if price is already too high (no upside left)
     if (priceYes > maxBuyPrice) {
@@ -41,7 +55,9 @@ export function generateLadderOrders(
     // Track which levels are already filled
     const filledLevels = new Set(state.ladderFilled);
 
-    for (const ladderLevel of ladderLevels) {
+    for (let i = 0; i < ladderLevels.length; i++) {
+        const ladderLevel = ladderLevels[i];
+
         // Skip if already filled
         if (filledLevels.has(ladderLevel)) {
             continue;
@@ -49,9 +65,10 @@ export function generateLadderOrders(
 
         // Check if price has reached this ladder level (and is still below max)
         if (priceYes >= ladderLevel && priceYes <= maxBuyPrice) {
-            // Calculate order size
-            // Size decreases as price increases (buy less at higher prices)
-            const sizeUsdc = (maxExposure / ladderLevels.length);
+            // Use confidence-weighted sizing
+            // Higher levels get more capital
+            const weight = CONFIDENCE_WEIGHTS[i] ?? (1 / ladderLevels.length);
+            const sizeUsdc = maxExposure * weight;
             const shares = sizeUsdc / priceYes;
 
             const order: ProposedOrder = {
@@ -62,7 +79,7 @@ export function generateLadderOrders(
                 sizeUsdc,
                 shares,
                 strategy: StrategyType.LADDER_COMPRESSION,
-                strategyDetail: `ladder_${ladderLevel}`,
+                strategyDetail: `ladder_${ladderLevel}_weight_${(weight * 100).toFixed(0)}pct`,
                 confidence: calculateLadderConfidence(ladderLevel, priceYes)
             };
 
@@ -74,7 +91,13 @@ export function generateLadderOrders(
                 strategy: 'LADDER_COMPRESSION',
                 priceYes,
                 priceNo: state.lastPriceNo,
-                details: { ladderLevel, sizeUsdc, shares }
+                details: {
+                    ladderLevel,
+                    sizeUsdc,
+                    shares,
+                    weight: `${(weight * 100).toFixed(0)}%`,
+                    tier: i + 1
+                }
             });
         }
     }

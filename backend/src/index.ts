@@ -178,7 +178,7 @@ class TradingBot {
         if (!state) return;
 
         // 1. Update market state with new price
-        const updatedState = this.updateMarketState(state, update);
+        let updatedState = this.updateMarketState(state, update);
 
         // 2. Classify regime
         const market = await this.prisma.market.findUnique({
@@ -240,25 +240,63 @@ class TradingBot {
             }
         }
 
-        // 6. Check for Profit Taking
-        // We do this BEFORE regular strategy execution to prioritize locking in gains
+        // 6. Check for Profit Taking, Moon Bag Exit, or Thesis-Based Stop Loss
+        // We do this BEFORE regular strategy execution to prioritize exits
         const position = this.riskManager.getPosition(update.marketId);
         if (position) {
-            const profitCheck = exitStrategy.shouldTakeProfit(
+            // First, check and track consensus break state
+            const consensusCheck = exitStrategy.checkConsensusBreak(updatedState, update.priceYes);
+            updatedState = consensusCheck.updatedState;
+
+            // Check if we should exit (profit, moon bag exit, or thesis stop)
+            const exitCheck = exitStrategy.shouldTakeProfit(
                 position,
                 update.priceYes,
-                update.priceNo
+                update.priceNo,
+                updatedState.consensusBreakConfirmed,
+                updatedState.moonBagActive,
+                updatedState.moonBagPriceAtActivation
             );
 
-            if (profitCheck.shouldExit && tokenIdYes && tokenIdNo) {
-                const exitOrder = exitStrategy.generateExitOrder(updatedState, position, tokenIdYes, tokenIdNo);
+            if (exitCheck.shouldExit && tokenIdYes && tokenIdNo) {
+                const exitOrder = exitStrategy.generateExitOrder(
+                    updatedState,
+                    position,
+                    tokenIdYes,
+                    tokenIdNo,
+                    exitCheck.exitPct  // 0.75 for partial, 1.0 for full
+                );
+
                 if (exitOrder) {
-                    logger.info('Taking profit', {
-                        marketId: update.marketId,
-                        profitPct: profitCheck.profitPct,
-                        reason: profitCheck.reason
-                    });
-                    proposedOrders.push(exitOrder);
+                    if (exitCheck.isMoonBagExit) {
+                        logger.info('🌙 MOON BAG EXIT - Price dropped, selling remaining', {
+                            marketId: update.marketId,
+                            reason: exitCheck.reason
+                        });
+                    } else if (exitCheck.isProfit && exitCheck.exitPct < 1.0) {
+                        logger.info('💰 TAKING 75% PROFIT - Creating moon bag', {
+                            marketId: update.marketId,
+                            profitPct: (exitCheck.profitPct * 100).toFixed(1) + '%',
+                            reason: exitCheck.reason
+                        });
+                        // Activate moon bag after this order executes
+                        updatedState.moonBagActive = true;
+                        updatedState.moonBagPriceAtActivation = update.priceYes;
+                    } else if (exitCheck.isProfit) {
+                        logger.info('💰 TAKING FULL PROFIT', {
+                            marketId: update.marketId,
+                            profitPct: (exitCheck.profitPct * 100).toFixed(1) + '%'
+                        });
+                    } else {
+                        logger.info('🛑 THESIS STOP - Consensus broken', {
+                            marketId: update.marketId,
+                            pnlPct: (exitCheck.profitPct * 100).toFixed(1) + '%',
+                            reason: exitCheck.reason
+                        });
+                    }
+
+                    // IMPORTANT: When exiting, only include the exit order
+                    proposedOrders = [exitOrder];
                 }
             }
         }
@@ -388,7 +426,9 @@ class TradingBot {
             exposureYes: 0,
             exposureNo: 0,
             tailActive: false,
-            lastUpdated: new Date()
+            lastUpdated: new Date(),
+            consensusBreakConfirmed: false,
+            moonBagActive: false
         };
         this.marketStates.set(marketId, state);
     }
@@ -433,7 +473,9 @@ class TradingBot {
                 exposureYes: 0,
                 exposureNo: 0,
                 tailActive: dbState.tailActive,
-                lastUpdated: dbState.lastProcessed
+                lastUpdated: dbState.lastProcessed,
+                consensusBreakConfirmed: false,
+                moonBagActive: false
             };
 
             // Load exposure from positions

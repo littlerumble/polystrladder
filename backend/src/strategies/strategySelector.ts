@@ -2,32 +2,40 @@ import { MarketRegime, StrategyType } from '../core/types.js';
 import { strategyLogger as logger } from '../core/logger.js';
 
 /**
- * Strategy Selector - Maps market regime to appropriate strategy.
+ * Strategy Selector - Consensus Detection with Delayed Commitment
+ * 
+ * Philosophy:
+ * - Do NOTHING in uncertain markets (don't straddle, don't guess)
+ * - Enter ONLY after directional pressure appears
+ * - Ride consensus with confidence-tiered ladder
  * 
  * Mapping:
- * - LATE_COMPRESSED  → LADDER_COMPRESSION (ride the wave)
- * - HIGH_VOLATILITY  → VOLATILITY_ABSORPTION (both sides)
- * - MID_CONSENSUS    → LADDER_COMPRESSION (scaled entries)
- * - EARLY_UNCERTAIN  → VOLATILITY_ABSORPTION (straddle)
+ * - LATE_COMPRESSED  → LADDER_COMPRESSION (strong consensus, ride it)
+ * - MID_CONSENSUS    → LADDER_COMPRESSION (consensus forming, scale in)
+ * - HIGH_VOLATILITY  → NONE (too noisy, wait)
+ * - EARLY_UNCERTAIN  → NONE (no consensus yet, don't enter)
  */
 export function selectStrategy(regime: MarketRegime): StrategyType {
     switch (regime) {
         case MarketRegime.LATE_COMPRESSED:
-            // Market is near resolution with high certainty
-            // Use ladder to scale in as price compresses
+            // Strong consensus near resolution - ride the wave
+            return StrategyType.LADDER_COMPRESSION;
+
+        case MarketRegime.MID_CONSENSUS:
+            // Consensus is forming - scale in with ladder
             return StrategyType.LADDER_COMPRESSION;
 
         case MarketRegime.HIGH_VOLATILITY:
-            // Market is swinging, absorb volatility on both sides
-            return StrategyType.VOLATILITY_ABSORPTION;
-
-        case MarketRegime.MID_CONSENSUS:
-            // Stable consensus forming, ladder in
-            return StrategyType.LADDER_COMPRESSION;
+            // Market is swinging - DO NOT ENTER
+            // Wait for volatility to settle and consensus to emerge
+            logger.info('HIGH_VOLATILITY detected - waiting for consensus');
+            return StrategyType.NONE;
 
         case MarketRegime.EARLY_UNCERTAIN:
-            // High uncertainty, straddle both sides
-            return StrategyType.VOLATILITY_ABSORPTION;
+            // 50/50 territory - DO NOT ENTER
+            // No consensus yet, wait for directional pressure
+            logger.info('EARLY_UNCERTAIN detected - waiting for directional pressure');
+            return StrategyType.NONE;
 
         default:
             logger.warn(`Unknown regime: ${regime}, defaulting to NONE`);
@@ -70,13 +78,13 @@ export function shouldConsiderTailInsurance(
 export function getStrategyDescription(strategy: StrategyType): string {
     switch (strategy) {
         case StrategyType.LADDER_COMPRESSION:
-            return 'Ladder Compression: Scaled entries as certainty grows';
+            return 'Ladder Compression: Confidence-tiered entries as consensus grows';
         case StrategyType.VOLATILITY_ABSORPTION:
-            return 'Volatility Absorption: Both-side positioning';
+            return 'Volatility Absorption: DISABLED - waiting for consensus';
         case StrategyType.TAIL_INSURANCE:
             return 'Tail Insurance: Cheap convexity bet on upset';
         case StrategyType.NONE:
-            return 'No action';
+            return 'No action - waiting for consensus to form';
         default:
             return 'Unknown strategy';
     }

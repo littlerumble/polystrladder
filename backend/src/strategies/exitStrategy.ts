@@ -3,100 +3,219 @@ import { configService } from '../config/configService.js';
 import { strategyLogger as logger } from '../core/logger.js';
 
 /**
- * Exit Strategy - Profit-taking and position management
+ * Exit Strategy - Profit-taking with Moon Bag and Thesis-based Stop Loss
  * 
- * Logic:
- * 1. Check if position has unrealized profit >= takeProfitPct (default 20%)
- * 2. If profitable, generate a SELL order to close the position
- * 3. Only exits on YES side (since we primarily buy YES)
+ * PROFIT TAKING (75/25 Moon Bag Strategy):
+ * - At 15% profit: Sell 75% of position (lock in gains)
+ * - Keep 25% as "moon bag" (free upside)
+ * - Moon bag rules:
+ *   - If price goes UP from activation: Hold until resolution
+ *   - If price goes DOWN at all: Sell immediately
  * 
- * Why it works:
- * - Locks in gains before resolution
- * - Frees up capital for new opportunities
- * - Reduces risk of price reversal
+ * THESIS-BASED STOP LOSS:
+ * - Only triggers if consensus is broken for 10+ minutes
+ * - Exits ENTIRE position (including moon bag if active)
  */
 
-export interface ExitConfig {
-    takeProfitPct: number;      // e.g., 0.20 = 20% profit
-    minHoldTimeMs: number;      // Minimum time to hold before exit
+export interface ExitCheckResult {
+    shouldExit: boolean;
+    profitPct: number;
+    reason: string;
+    isProfit: boolean;
+    exitPct: number;  // 0.75 for partial, 1.0 for full
+    isMoonBagExit: boolean;
 }
 
-const DEFAULT_EXIT_CONFIG: ExitConfig = {
-    takeProfitPct: 0.10,        // Take profit at 10% gain
-    minHoldTimeMs: 5 * 60 * 1000  // Hold for at least 5 minutes
-};
+/**
+ * Check if consensus has broken (price below first ladder level).
+ */
+export function checkConsensusBreak(
+    state: MarketState,
+    currentPriceYes: number
+): { isBreaking: boolean; updatedState: MarketState } {
+    const ladderLevels: number[] = configService.get('ladderLevels') || [0.65, 0.75, 0.85, 0.92, 0.95];
+    const firstLadderLevel = ladderLevels[0] || 0.65;
+    const consensusBreakMinutes = Number(configService.get('consensusBreakMinutes')) || 10;
+    const breakDurationMs = consensusBreakMinutes * 60 * 1000;
+
+    // Only check if we have a position (ladder filled)
+    if (state.ladderFilled.length === 0) {
+        return { isBreaking: false, updatedState: state };
+    }
+
+    const now = new Date();
+    let updatedState = { ...state };
+
+    if (currentPriceYes < firstLadderLevel) {
+        if (!state.consensusBreakStartTime) {
+            updatedState.consensusBreakStartTime = now;
+            updatedState.consensusBreakConfirmed = false;
+            logger.info('⚠️ Consensus break started - monitoring', {
+                marketId: state.marketId,
+                currentPrice: currentPriceYes.toFixed(3),
+                firstLadder: firstLadderLevel,
+                monitoringFor: `${consensusBreakMinutes} minutes`
+            });
+        } else {
+            const breakDuration = now.getTime() - state.consensusBreakStartTime.getTime();
+            if (breakDuration >= breakDurationMs) {
+                updatedState.consensusBreakConfirmed = true;
+                logger.info('🛑 Consensus break CONFIRMED - thesis invalidated', {
+                    marketId: state.marketId,
+                    currentPrice: currentPriceYes.toFixed(3),
+                    brokenFor: `${Math.round(breakDuration / 60000)} minutes`
+                });
+            }
+        }
+        return { isBreaking: true, updatedState };
+    } else {
+        if (state.consensusBreakStartTime) {
+            logger.info('✅ Price recovered - consensus intact', {
+                marketId: state.marketId,
+                currentPrice: currentPriceYes.toFixed(3)
+            });
+        }
+        updatedState.consensusBreakStartTime = undefined;
+        updatedState.consensusBreakConfirmed = false;
+        return { isBreaking: false, updatedState };
+    }
+}
 
 /**
- * Check if a position should be exited for profit.
+ * Check if moon bag should be exited (price dropped from activation).
+ */
+export function checkMoonBagExit(
+    state: MarketState,
+    currentPriceYes: number
+): { shouldExit: boolean; reason: string } {
+    if (!state.moonBagActive || !state.moonBagPriceAtActivation) {
+        return { shouldExit: false, reason: '' };
+    }
+
+    // If price dropped AT ALL from moon bag activation, exit
+    if (currentPriceYes < state.moonBagPriceAtActivation) {
+        return {
+            shouldExit: true,
+            reason: `Moon bag price dropped: ${currentPriceYes.toFixed(3)} < ${state.moonBagPriceAtActivation.toFixed(3)} (activation price)`
+        };
+    }
+
+    return { shouldExit: false, reason: '' };
+}
+
+/**
+ * Check if a position should be exited.
  */
 export function shouldTakeProfit(
     position: Position,
     currentPriceYes: number,
     currentPriceNo: number,
-    config: ExitConfig = DEFAULT_EXIT_CONFIG
-): { shouldExit: boolean; profitPct: number; reason: string } {
-    // Check YES position
-    if (position.sharesYes > 0 && position.avgEntryYes) {
-        const costBasis = position.costBasisYes;
-        const currentValue = position.sharesYes * currentPriceYes;
-        const unrealizedProfit = currentValue - costBasis;
-        const profitPct = costBasis > 0 ? unrealizedProfit / costBasis : 0;
+    consensusBreakConfirmed: boolean = false,
+    moonBagActive: boolean = false,
+    moonBagPriceAtActivation?: number
+): ExitCheckResult {
+    const takeProfitPct: number = Number(configService.get('takeProfitPct')) || 0.15;
 
-        if (profitPct >= config.takeProfitPct) {
+    // Check for moon bag exit first (price dropped)
+    if (moonBagActive && moonBagPriceAtActivation) {
+        if (currentPriceYes < moonBagPriceAtActivation) {
+            const costBasis = position.costBasisYes;
+            const currentValue = position.sharesYes * currentPriceYes;
+            const profitPct = costBasis > 0 ? (currentValue - costBasis) / costBasis : 0;
+
             return {
                 shouldExit: true,
                 profitPct,
-                reason: `YES Profit target reached: ${(profitPct * 100).toFixed(1)}% >= ${(config.takeProfitPct * 100).toFixed(1)}%`
+                reason: `🌙 MOON BAG EXIT: Price dropped from ${moonBagPriceAtActivation.toFixed(3)} to ${currentPriceYes.toFixed(3)}`,
+                isProfit: profitPct > 0,
+                exitPct: 1.0,  // Full exit of remaining moon bag
+                isMoonBagExit: true
+            };
+        }
+        // Moon bag active and price is UP - hold until resolution
+        return { shouldExit: false, profitPct: 0, reason: 'Moon bag holding - price up', isProfit: false, exitPct: 0, isMoonBagExit: false };
+    }
+
+    // Check YES position for initial profit taking
+    if (position.sharesYes > 0 && position.costBasisYes > 0) {
+        const costBasis = position.costBasisYes;
+        const currentValue = position.sharesYes * currentPriceYes;
+        const unrealizedProfit = currentValue - costBasis;
+        const profitPct = unrealizedProfit / costBasis;
+
+        // Profit taking - sell 75%, keep 25% moon bag
+        if (profitPct >= takeProfitPct && !moonBagActive) {
+            return {
+                shouldExit: true,
+                profitPct,
+                reason: `Profit target reached: ${(profitPct * 100).toFixed(1)}% >= ${(takeProfitPct * 100).toFixed(1)}% - Selling 75%, keeping 25% moon bag`,
+                isProfit: true,
+                exitPct: 0.75,  // Partial exit
+                isMoonBagExit: false
+            };
+        }
+
+        // Thesis stop - full exit
+        if (consensusBreakConfirmed) {
+            return {
+                shouldExit: true,
+                profitPct,
+                reason: `THESIS STOP: Consensus broken for 10+ minutes. P&L: ${(profitPct * 100).toFixed(1)}%`,
+                isProfit: false,
+                exitPct: 1.0,  // Full exit
+                isMoonBagExit: false
             };
         }
     }
 
     // Check NO position
-    if (position.sharesNo > 0 && position.avgEntryNo) {
+    if (position.sharesNo > 0 && position.costBasisNo > 0 && !moonBagActive) {
         const costBasis = position.costBasisNo;
         const currentValue = position.sharesNo * currentPriceNo;
         const unrealizedProfit = currentValue - costBasis;
-        const profitPct = costBasis > 0 ? unrealizedProfit / costBasis : 0;
+        const profitPct = unrealizedProfit / costBasis;
 
-        if (profitPct >= config.takeProfitPct) {
+        if (profitPct >= takeProfitPct) {
             return {
                 shouldExit: true,
                 profitPct,
-                reason: `NO Profit target reached: ${(profitPct * 100).toFixed(1)}% >= ${(config.takeProfitPct * 100).toFixed(1)}%`
+                reason: `NO Profit target: ${(profitPct * 100).toFixed(1)}% - Selling 75%`,
+                isProfit: true,
+                exitPct: 0.75,
+                isMoonBagExit: false
             };
         }
     }
 
-    return { shouldExit: false, profitPct: 0, reason: 'No profit target reached' };
+    return { shouldExit: false, profitPct: 0, reason: 'No exit trigger', isProfit: false, exitPct: 0, isMoonBagExit: false };
 }
 
 /**
- * Generate an exit order to take profit.
+ * Generate an exit order.
+ * exitPct: 0.75 for partial (moon bag creation), 1.0 for full exit
  */
 export function generateExitOrder(
     state: MarketState,
     position: Position,
     tokenIdYes: string,
-    tokenIdNo: string
+    tokenIdNo: string,
+    exitPct: number = 1.0
 ): ProposedOrder | null {
     let side: Side;
     let tokenId: string;
     let price: number;
     let shares: number;
 
-    // Determine which side to sell based on position
-    // Prioritize the one with profit if both exist (simplified for now to just pick the largest position or check profit again)
-    // For now, we'll check which one triggered the signal effectively by checking shares
     if (position.sharesYes > 0) {
         side = Side.YES;
         tokenId = tokenIdYes;
         price = state.lastPriceYes;
-        shares = position.sharesYes;
+        shares = position.sharesYes * exitPct;  // Partial or full
     } else if (position.sharesNo > 0) {
         side = Side.NO;
         tokenId = tokenIdNo;
         price = state.lastPriceNo;
-        shares = position.sharesNo;
+        shares = position.sharesNo * exitPct;
     } else {
         return null;
     }
@@ -111,12 +230,12 @@ export function generateExitOrder(
         sizeUsdc,
         shares: shares,
         strategy: StrategyType.PROFIT_TAKING,
-        strategyDetail: 'take_profit_exit',
+        strategyDetail: exitPct < 1.0 ? 'partial_exit_75pct' : 'full_exit',
         confidence: 1.0,
-        isExit: true  // Mark as exit order
+        isExit: true
     };
 
-    logger.strategy('PROFIT_TAKING', {
+    logger.strategy('EXIT_TRIGGER', {
         marketId: state.marketId,
         regime: state.regime,
         strategy: 'PROFIT_TAKING',
@@ -124,13 +243,14 @@ export function generateExitOrder(
         priceNo: state.lastPriceNo,
         details: {
             side,
-            sharesToSell: shares,
-            sizeUsdc,
-            currentPrice: price
+            exitPct: `${(exitPct * 100).toFixed(0)}%`,
+            sharesToSell: shares.toFixed(4),
+            sizeUsdc: sizeUsdc.toFixed(2),
+            keepingMoonBag: exitPct < 1.0
         }
     });
 
     return order;
 }
 
-export default { shouldTakeProfit, generateExitOrder };
+export default { shouldTakeProfit, generateExitOrder, checkConsensusBreak, checkMoonBagExit };

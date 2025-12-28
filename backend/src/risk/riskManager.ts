@@ -11,12 +11,14 @@ import { riskLogger as logger } from '../core/logger.js';
  * 2. Enforce max single order size (0.25% of bankroll)
  * 3. Reject excessive order frequency
  * 4. Ensure bankroll consistency
+ * 5. Protect realized profits in separate bucket (capital preservation)
  */
 export class RiskManager {
     private prisma: PrismaClient;
-    private cashBalance: number;
+    private cashBalance: number;                              // Tradeable cash (original bankroll minus active positions)
+    private realizedProfitsBucket: number = 0;                // Protected profits - NOT available for trading
     private positions: Map<string, Position> = new Map();
-    private recentOrders: Map<string, Date[]> = new Map(); // marketId -> order timestamps
+    private recentOrders: Map<string, Date[]> = new Map();    // marketId -> order timestamps
 
     constructor(prisma: PrismaClient) {
         this.prisma = prisma;
@@ -45,30 +47,43 @@ export class RiskManager {
             });
         }
 
-        // Calculate remaining cash from trades
+        // Calculate balances from trade history
         const trades = await this.prisma.trade.findMany({
             where: { status: 'FILLED' }
         });
 
-        let totalSpent = 0;
-        let totalGained = 0;
+        let totalSpent = 0;         // Money spent on buys
+        let totalCostBasisReturned = 0;  // Original cost basis returned on sells
+        let totalProfitsRealized = 0;    // Profits from sells (goes to protected bucket)
 
         for (const trade of trades) {
-            // Check if it's a sell/profit-taking trade
-            // We use strategy 'PROFIT_TAKING' or checks on strategyDetail/action if needed
-            // For now, based on our implementation, PROFIT_TAKING is the strategy for exits
             if (trade.strategy === 'PROFIT_TAKING') {
-                totalGained += trade.size;
+                // This is a sell - we need to figure out cost basis vs profit
+                // The trade.size is the total proceeds from the sale
+                // We need the position's cost basis at the time of sale
+                // For simplicity, we'll recalculate from positions table
+                totalCostBasisReturned += trade.size;  // This will be adjusted below
             } else {
                 totalSpent += trade.size;
             }
         }
 
-        this.cashBalance = config.bankroll - totalSpent + totalGained;
+        // Recalculate profits from positions table (more accurate)
+        const allPositions = await this.prisma.position.findMany();
+        for (const pos of allPositions) {
+            totalProfitsRealized += pos.realizedPnl;
+        }
+
+        // Cash balance = bankroll - spent + cost basis returned (NOT profits)
+        // But since we can't perfectly separate from historical data, 
+        // we'll use a simpler approach: profits are tracked going forward
+        this.cashBalance = config.bankroll - totalSpent + totalCostBasisReturned - totalProfitsRealized;
+        this.realizedProfitsBucket = totalProfitsRealized > 0 ? totalProfitsRealized : 0;
 
         logger.info('Risk manager initialized', {
             bankroll: config.bankroll,
             cashBalance: this.cashBalance,
+            realizedProfitsBucket: this.realizedProfitsBucket,
             positionCount: this.positions.size,
             totalSpent
         });
@@ -81,6 +96,15 @@ export class RiskManager {
         const config = configService.getAll();
         const warnings: string[] = [];
 
+        // Exit orders always pass (we want to be able to exit)
+        if (order.isExit) {
+            return {
+                approved: true,
+                originalOrder: order,
+                warnings: ['Exit order - bypassing risk checks']
+            };
+        }
+
         // 0. Check position limit for NEW markets
         const existingPosition = this.positions.get(order.marketId);
         const maxPositions = config.maxActivePositions || 6;
@@ -92,12 +116,12 @@ export class RiskManager {
             };
         }
 
-        // 1. Check cash balance
-        if (!order.isExit && order.sizeUsdc > this.cashBalance) {
+        // 1. Check cash balance (only tradeable cash, not profits bucket)
+        if (order.sizeUsdc > this.cashBalance) {
             return {
                 approved: false,
                 originalOrder: order,
-                rejectionReason: `Insufficient cash: need $${order.sizeUsdc.toFixed(2)}, have $${this.cashBalance.toFixed(2)}`
+                rejectionReason: `Insufficient cash: need $${order.sizeUsdc.toFixed(2)}, have $${this.cashBalance.toFixed(2)} (profits bucket: $${this.realizedProfitsBucket.toFixed(2)} protected)`
             };
         }
 
@@ -178,6 +202,7 @@ export class RiskManager {
 
     /**
      * Update state after an order is executed.
+     * CAPITAL PRESERVATION: Profits go to protected bucket, only cost basis returns to tradeable cash.
      */
     recordExecution(order: ProposedOrder, filledUsdc: number, filledShares: number): void {
         // Retrieve or initialize position
@@ -195,21 +220,49 @@ export class RiskManager {
         }
 
         if (order.isExit) {
-            // Processing Sell/Exit
-            this.cashBalance += filledUsdc;
+            // Processing Sell/Exit - CAPITAL PRESERVATION LOGIC
+            let costBasisRemoved: number;
+            let profit: number;
 
             if (order.side === 'YES') {
-                const pctSold = filledShares / position.sharesYes;
-                const costBasisRemoved = position.costBasisYes * pctSold;
+                const pctSold = position.sharesYes > 0 ? filledShares / position.sharesYes : 1;
+                costBasisRemoved = position.costBasisYes * pctSold;
+                profit = filledUsdc - costBasisRemoved;
+
                 position.sharesYes -= filledShares;
                 position.costBasisYes -= costBasisRemoved;
-                position.realizedPnl += (filledUsdc - costBasisRemoved);
+                position.realizedPnl += profit;
             } else {
-                const pctSold = filledShares / position.sharesNo;
-                const costBasisRemoved = position.costBasisNo * pctSold;
+                const pctSold = position.sharesNo > 0 ? filledShares / position.sharesNo : 1;
+                costBasisRemoved = position.costBasisNo * pctSold;
+                profit = filledUsdc - costBasisRemoved;
+
                 position.sharesNo -= filledShares;
                 position.costBasisNo -= costBasisRemoved;
-                position.realizedPnl += (filledUsdc - costBasisRemoved);
+                position.realizedPnl += profit;
+            }
+
+            // CAPITAL PRESERVATION:
+            // - Cost basis returns to tradeable cash (so you can reinvest principal)
+            // - Profit goes to protected bucket (locked away, not tradeable)
+            this.cashBalance += costBasisRemoved;
+
+            if (profit > 0) {
+                this.realizedProfitsBucket += profit;
+                logger.info('💰 Profit locked in protected bucket', {
+                    marketId: order.marketId,
+                    profit: profit.toFixed(2),
+                    totalProtectedProfits: this.realizedProfitsBucket.toFixed(2)
+                });
+            } else {
+                // Loss - this reduces our tradeable cash (cost basis returned is less than what we put in)
+                // Actually the loss is already accounted for since we only return costBasisRemoved
+                // which is based on original cost, not current value
+                logger.info('📉 Loss realized', {
+                    marketId: order.marketId,
+                    loss: profit.toFixed(2),
+                    cashBalance: this.cashBalance.toFixed(2)
+                });
             }
 
         } else {
@@ -233,7 +286,11 @@ export class RiskManager {
 
         if (position.sharesYes <= 0.0001 && position.sharesNo <= 0.0001) {
             this.positions.delete(order.marketId);
-            logger.info('Position closed and removed from tracking', { marketId: order.marketId, realizedPnl: position.realizedPnl });
+            logger.info('Position closed and removed from tracking', {
+                marketId: order.marketId,
+                realizedPnl: position.realizedPnl,
+                protectedProfits: this.realizedProfitsBucket.toFixed(2)
+            });
         } else {
             this.positions.set(order.marketId, position);
         }
@@ -248,15 +305,31 @@ export class RiskManager {
             side: order.side,
             filledUsdc,
             filledShares,
-            cashRemaining: this.cashBalance
+            cashRemaining: this.cashBalance,
+            protectedProfits: this.realizedProfitsBucket
         });
     }
 
     /**
-     * Get current cash balance.
+     * Get current tradeable cash balance (excludes protected profits).
      */
     getCashBalance(): number {
         return this.cashBalance;
+    }
+
+    /**
+     * Get protected profits bucket (not available for trading).
+     */
+    getProtectedProfits(): number {
+        return this.realizedProfitsBucket;
+    }
+
+    /**
+     * Get total account value (tradeable + protected + positions).
+     */
+    getTotalAccountValue(currentPrices: Map<string, { yes: number; no: number }>): number {
+        const positionsValue = this.getPositionsValue(currentPrices);
+        return this.cashBalance + this.realizedProfitsBucket + positionsValue;
     }
 
     /**
@@ -289,9 +362,9 @@ export class RiskManager {
     }
 
     /**
-     * Get total portfolio value.
+     * Get positions value at current prices.
      */
-    getTotalValue(currentPrices: Map<string, { yes: number; no: number }>): number {
+    private getPositionsValue(currentPrices: Map<string, { yes: number; no: number }>): number {
         let positionsValue = 0;
 
         for (const [marketId, position] of this.positions) {
@@ -305,7 +378,16 @@ export class RiskManager {
             }
         }
 
-        return this.cashBalance + positionsValue;
+        return positionsValue;
+    }
+
+    /**
+     * Get total portfolio value (for dashboard).
+     */
+    getTotalValue(currentPrices: Map<string, { yes: number; no: number }>): number {
+        const positionsValue = this.getPositionsValue(currentPrices);
+        // Include protected profits in total value for display
+        return this.cashBalance + this.realizedProfitsBucket + positionsValue;
     }
 
     /**

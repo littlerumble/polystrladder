@@ -14,6 +14,8 @@ export interface Config {
     topNMarkets: number;
     maxActivePositions: number;
     takeProfitPct: number;
+    stopLossPct: number;
+    consensusBreakMinutes: number;
     minHoldTimeMinutes: number;
     allowedCategories: string[];
     excludedCategories: string[];

@@ -99,6 +99,14 @@ export interface MarketState {
     exposureNo: number;
     tailActive: boolean;
     lastUpdated: Date;
+
+    // Thesis-based stop loss tracking
+    consensusBreakStartTime?: Date;   // When price first dropped below first ladder
+    consensusBreakConfirmed: boolean; // True if break held for required duration
+
+    // Moon bag tracking
+    moonBagActive: boolean;           // True after taking 75% profit
+    moonBagPriceAtActivation?: number; // Price when moon bag was created
 }
 
 /**

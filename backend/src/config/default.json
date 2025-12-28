@@ -6,6 +6,8 @@
     "topNMarkets": 6,
     "maxActivePositions": 6,
     "takeProfitPct": 0.15,
+    "stopLossPct": 0.20,
+    "consensusBreakMinutes": 10,
     "allowedCategories": [
         "Sports"
     ],
@@ -72,13 +74,13 @@
     "minLiquidity": 1000,
     "maxTimeToResolutionHours": 72,
     "ladderLevels": [
-        0.55,
-        0.60,
         0.65,
-        0.70,
-        0.75
+        0.75,
+        0.85,
+        0.92,
+        0.95
     ],
-    "maxBuyPrice": 0.80,
+    "maxBuyPrice": 0.92,
     "tailPriceThreshold": 0.05,
     "tailExposurePct": 0.0075,
     "volatilityWindowMinutes": 15,
