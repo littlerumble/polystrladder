@@ -267,14 +267,62 @@ export class DashboardServer {
             res.json(configService.getAll());
         });
 
-        // Get all markets
+        // Get all markets with live prices and entry cues
         this.app.get('/api/markets', async (_, res) => {
             try {
                 const markets = await this.prisma.market.findMany({
                     where: { active: true },
-                    orderBy: { volume24h: 'desc' }
+                    orderBy: { volume24h: 'desc' },
+                    include: { marketStates: true }
                 });
-                res.json(markets);
+
+                // Get ladder config for entry cues
+                const ladderLevels: number[] = configService.get('ladderLevels') || [0.60, 0.70, 0.80, 0.90, 0.95];
+                const firstLadder = ladderLevels[0];
+                const maxBuyPrice = configService.get('maxBuyPrice') || 0.92;
+
+                // Enrich with live prices and entry cues
+                const enrichedMarkets = await Promise.all(markets.map(async (market) => {
+                    // Get live price
+                    let priceYes = 0;
+                    let priceNo = 0;
+
+                    const livePrice = await this.fetchLivePrice(market);
+                    if (livePrice) {
+                        priceYes = livePrice.priceYes;
+                        priceNo = livePrice.priceNo;
+                    }
+
+                    // Determine entry cue based on price
+                    let entryCue = '';
+                    if (priceYes < firstLadder) {
+                        const needed = ((firstLadder - priceYes) * 100).toFixed(1);
+                        entryCue = `Waiting for ${(firstLadder * 100).toFixed(0)}% (+${needed}% needed)`;
+                    } else if (priceYes > maxBuyPrice) {
+                        entryCue = `Too high (>${(maxBuyPrice * 100).toFixed(0)}%) - No entry`;
+                    } else {
+                        // Find which ladder level we're at
+                        const currentLevel = ladderLevels.filter(l => priceYes >= l).length;
+                        const nextLevel = ladderLevels[currentLevel];
+                        if (nextLevel && priceYes < nextLevel) {
+                            entryCue = `At L${currentLevel}/${ladderLevels.length}, next at ${(nextLevel * 100).toFixed(0)}%`;
+                        } else {
+                            entryCue = `All ladders filled`;
+                        }
+                    }
+
+                    const marketState = market.marketStates?.[0];
+                    return {
+                        ...market,
+                        priceYes,
+                        priceNo,
+                        pricePct: `${(priceYes * 100).toFixed(1)}%`,
+                        entryCue,
+                        regime: marketState?.regime || 'UNKNOWN'
+                    };
+                }));
+
+                res.json(enrichedMarkets);
             } catch (error) {
                 res.status(500).json({ error: String(error) });
             }
