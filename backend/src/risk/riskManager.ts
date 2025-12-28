@@ -51,11 +51,20 @@ export class RiskManager {
         });
 
         let totalSpent = 0;
+        let totalGained = 0;
+
         for (const trade of trades) {
-            totalSpent += trade.size;
+            // Check if it's a sell/profit-taking trade
+            // We use strategy 'PROFIT_TAKING' or checks on strategyDetail/action if needed
+            // For now, based on our implementation, PROFIT_TAKING is the strategy for exits
+            if (trade.strategy === 'PROFIT_TAKING') {
+                totalGained += trade.size;
+            } else {
+                totalSpent += trade.size;
+            }
         }
 
-        this.cashBalance = config.bankroll - totalSpent;
+        this.cashBalance = config.bankroll - totalSpent + totalGained;
 
         logger.info('Risk manager initialized', {
             bankroll: config.bankroll,
@@ -84,7 +93,7 @@ export class RiskManager {
         }
 
         // 1. Check cash balance
-        if (order.sizeUsdc > this.cashBalance) {
+        if (!order.isExit && order.sizeUsdc > this.cashBalance) {
             return {
                 approved: false,
                 originalOrder: order,
@@ -171,10 +180,7 @@ export class RiskManager {
      * Update state after an order is executed.
      */
     recordExecution(order: ProposedOrder, filledUsdc: number, filledShares: number): void {
-        // Deduct from cash
-        this.cashBalance -= filledUsdc;
-
-        // Update position
+        // Retrieve or initialize position
         let position = this.positions.get(order.marketId);
         if (!position) {
             position = {
@@ -188,23 +194,46 @@ export class RiskManager {
             };
         }
 
-        if (order.side === 'YES') {
-            const newTotalShares = position.sharesYes + filledShares;
-            const newCostBasis = position.costBasisYes + filledUsdc;
-            position.sharesYes = newTotalShares;
-            position.costBasisYes = newCostBasis;
-            position.avgEntryYes = newCostBasis / newTotalShares;
+        if (order.isExit) {
+            // Processing Sell/Exit
+            this.cashBalance += filledUsdc;
+
+            if (order.side === 'YES') {
+                const pctSold = filledShares / position.sharesYes;
+                const costBasisRemoved = position.costBasisYes * pctSold;
+                position.sharesYes -= filledShares;
+                position.costBasisYes -= costBasisRemoved;
+                position.realizedPnl += (filledUsdc - costBasisRemoved);
+            } else {
+                const pctSold = filledShares / position.sharesNo;
+                const costBasisRemoved = position.costBasisNo * pctSold;
+                position.sharesNo -= filledShares;
+                position.costBasisNo -= costBasisRemoved;
+                position.realizedPnl += (filledUsdc - costBasisRemoved);
+            }
+
         } else {
-            const newTotalShares = position.sharesNo + filledShares;
-            const newCostBasis = position.costBasisNo + filledUsdc;
-            position.sharesNo = newTotalShares;
-            position.costBasisNo = newCostBasis;
-            position.avgEntryNo = newCostBasis / newTotalShares;
+            // Processing Buy
+            this.cashBalance -= filledUsdc;
+
+            if (order.side === 'YES') {
+                const newTotalShares = position.sharesYes + filledShares;
+                const newCostBasis = position.costBasisYes + filledUsdc;
+                position.sharesYes = newTotalShares;
+                position.costBasisYes = newCostBasis;
+                position.avgEntryYes = newCostBasis / newTotalShares;
+            } else {
+                const newTotalShares = position.sharesNo + filledShares;
+                const newCostBasis = position.costBasisNo + filledUsdc;
+                position.sharesNo = newTotalShares;
+                position.costBasisNo = newCostBasis;
+                position.avgEntryNo = newCostBasis / newTotalShares;
+            }
         }
 
-        if (position.sharesYes <= 0 && position.sharesNo <= 0) {
+        if (position.sharesYes <= 0.0001 && position.sharesNo <= 0.0001) {
             this.positions.delete(order.marketId);
-            logger.info('Position closed and removed from tracking', { marketId: order.marketId });
+            logger.info('Position closed and removed from tracking', { marketId: order.marketId, realizedPnl: position.realizedPnl });
         } else {
             this.positions.set(order.marketId, position);
         }

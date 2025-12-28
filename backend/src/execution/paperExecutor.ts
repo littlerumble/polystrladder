@@ -45,10 +45,13 @@ export class PaperExecutor implements Executor {
             await this.simulateDelay();
 
             // Simulate slippage
-            const slippageMultiplier = 1 + (this.slippageBps / 10000);
-            const filledPrice = order.side === 'YES'
-                ? order.price * slippageMultiplier  // Buying YES costs slightly more
-                : order.price * slippageMultiplier; // Buying NO costs slightly more
+            // For BUYS: You pay MORE (Price * 1.001)
+            // For SELLS: You receive LESS (Price * 0.999)
+            const slippageMultiplier = order.isExit
+                ? 1 - (this.slippageBps / 10000)
+                : 1 + (this.slippageBps / 10000);
+
+            const filledPrice = order.price * slippageMultiplier;
 
             // Simulate partial fills (90% chance of full fill)
             const fillRatio = Math.random() > 0.1 ? 1.0 : 0.8 + Math.random() * 0.2;
