@@ -281,20 +281,21 @@ export function shouldTakeProfit(
             };
         }
 
-        // IMMEDIATE STOP LOSS - tighter during live games
-        // Live games: -15% (faster volatility, cut losses quick)
-        // Pre-game:   -20% (more room for price discovery)
-        const stopLossPct = isLiveGame ? -0.15 : -0.20;
-        if (profitPct <= stopLossPct) {
-            const gameStatus = isLiveGame ? '🔴 LIVE' : '⏳ PRE-GAME';
-            return {
-                shouldExit: true,
-                profitPct,
-                reason: `🛑 STOP LOSS (${gameStatus}): Down ${(profitPct * 100).toFixed(1)}% (threshold: ${(stopLossPct * 100).toFixed(0)}%). Selling immediately.`,
-                isProfit: false,
-                exitPct: 1.0,  // Full exit
-                isMoonBagExit: false
-            };
+        // IMMEDIATE STOP LOSS - ONLY during live games (-15%)
+        // Pre-game: Use 60% price anchor via checkPreGameStopLoss() instead
+        // This prevents conflict: entry at 72%, -20% = 57.6% but thesis is 60%
+        if (isLiveGame) {
+            const stopLossPct = -0.15;
+            if (profitPct <= stopLossPct) {
+                return {
+                    shouldExit: true,
+                    profitPct,
+                    reason: `🛑 LIVE GAME STOP LOSS: Down ${(profitPct * 100).toFixed(1)}% (threshold: -15%). Selling immediately.`,
+                    isProfit: false,
+                    exitPct: 1.0,  // Full exit
+                    isMoonBagExit: false
+                };
+            }
         }
 
         // Thesis stop (10min consensus break) - still useful for sideways losses
