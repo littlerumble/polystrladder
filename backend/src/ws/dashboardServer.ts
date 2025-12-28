@@ -283,6 +283,9 @@ export class DashboardServer {
 
                 // Enrich with live prices and entry cues
                 const enrichedMarkets = await Promise.all(markets.map(async (market) => {
+                    // Get market state first (needed for entry cue)
+                    const marketState = market.marketStates?.[0];
+
                     // Get live price
                     let priceYes = 0;
                     let priceNo = 0;
@@ -297,21 +300,27 @@ export class DashboardServer {
                     let entryCue = '';
                     if (priceYes < firstLadder) {
                         const needed = ((firstLadder - priceYes) * 100).toFixed(1);
-                        entryCue = `Waiting for ${(firstLadder * 100).toFixed(0)}% (+${needed}% needed)`;
+                        entryCue = `Need +${needed}% to enter (first buy at ${(firstLadder * 100).toFixed(0)}%)`;
                     } else if (priceYes > maxBuyPrice) {
                         entryCue = `Too high (>${(maxBuyPrice * 100).toFixed(0)}%) - No entry`;
                     } else {
-                        // Find which ladder level we're at
-                        const currentLevel = ladderLevels.filter(l => priceYes >= l).length;
-                        const nextLevel = ladderLevels[currentLevel];
-                        if (nextLevel && priceYes < nextLevel) {
-                            entryCue = `At L${currentLevel}/${ladderLevels.length}, next at ${(nextLevel * 100).toFixed(0)}%`;
+                        // Find how many ladder levels we can fill at current price
+                        const levelsToFill = ladderLevels.filter(l => priceYes >= l);
+                        const filledCount = marketState ? JSON.parse(marketState.ladderFilled || '[]').length : 0;
+                        const unfilled = levelsToFill.length - filledCount;
+
+                        if (unfilled > 0) {
+                            // We can fill more levels now
+                            entryCue = `Ready to buy L${filledCount + 1}${unfilled > 1 ? `-L${filledCount + unfilled}` : ''} now`;
+                        } else if (filledCount < ladderLevels.length) {
+                            // All passed levels filled, wait for next
+                            const nextLevel = ladderLevels[filledCount];
+                            entryCue = `L${filledCount}/${ladderLevels.length} filled, next at ${(nextLevel * 100).toFixed(0)}%`;
                         } else {
-                            entryCue = `All ladders filled`;
+                            entryCue = `All ${ladderLevels.length} levels filled ✓`;
                         }
                     }
 
-                    const marketState = market.marketStates?.[0];
                     return {
                         ...market,
                         priceYes,
