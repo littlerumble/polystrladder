@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 
-const API_URL = 'http://localhost:3000';
+const API_URL = import.meta.env.PROD ? '' : 'http://localhost:3000';
 
 // Types
 export interface Market {
