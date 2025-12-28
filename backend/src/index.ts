@@ -42,7 +42,7 @@ class TradingBot {
     // State
     private marketStates: Map<string, MarketState> = new Map();
     private tokenToMarket: Map<string, string> = new Map();
-    private marketTokens: Map<string, string[]> = new Map(); // marketId -> [yesTokenId, noTokenId]
+    private marketTokens: Map<string, { yes: string; no: string }> = new Map(); // marketId -> {yes: tokenId, no: tokenId}
     private processingLocks: Set<string> = new Set(); // Prevent concurrent processing per market
     private pnlInterval: NodeJS.Timeout | null = null;
     private resolutionCheckInterval: NodeJS.Timeout | null = null;
@@ -93,9 +93,28 @@ class TradingBot {
             const markets = await this.marketLoader.loadAndPersistMarkets();
             logger.info(`Loaded ${markets.length} eligible markets`);
 
-            // Build token mappings
+            // Build token mappings - CRITICAL: Use outcomes field to correctly map YES/NO tokens
             for (const market of markets) {
-                this.marketTokens.set(market.marketId, market.clobTokenIds);
+                // outcomes field determines which token is YES vs NO
+                // clobTokenIds order matches outcomes order
+                const outcomes = market.outcomes;
+                const yesIndex = outcomes.findIndex(o => o.toLowerCase() === 'yes');
+                const noIndex = outcomes.findIndex(o => o.toLowerCase() === 'no');
+
+                if (yesIndex !== -1 && noIndex !== -1 && market.clobTokenIds.length >= 2) {
+                    this.marketTokens.set(market.marketId, {
+                        yes: market.clobTokenIds[yesIndex],
+                        no: market.clobTokenIds[noIndex]
+                    });
+                } else {
+                    // Fallback - log warning but continue
+                    logger.warn(`Non-standard outcomes for ${market.marketId}: ${JSON.stringify(outcomes)}`);
+                    this.marketTokens.set(market.marketId, {
+                        yes: market.clobTokenIds[0] || '',
+                        no: market.clobTokenIds[1] || ''
+                    });
+                }
+
                 for (const tokenId of market.clobTokenIds) {
                     this.tokenToMarket.set(tokenId, market.marketId);
                 }
@@ -158,7 +177,23 @@ class TradingBot {
         eventBus.on('market:filtered', async (markets: MarketData[]) => {
             for (const market of markets) {
                 if (!this.marketTokens.has(market.marketId)) {
-                    this.marketTokens.set(market.marketId, market.clobTokenIds);
+                    // Use outcomes field to correctly identify YES/NO tokens
+                    const outcomes = market.outcomes;
+                    const yesIndex = outcomes.findIndex(o => o.toLowerCase() === 'yes');
+                    const noIndex = outcomes.findIndex(o => o.toLowerCase() === 'no');
+
+                    if (yesIndex !== -1 && noIndex !== -1 && market.clobTokenIds.length >= 2) {
+                        this.marketTokens.set(market.marketId, {
+                            yes: market.clobTokenIds[yesIndex],
+                            no: market.clobTokenIds[noIndex]
+                        });
+                    } else {
+                        this.marketTokens.set(market.marketId, {
+                            yes: market.clobTokenIds[0] || '',
+                            no: market.clobTokenIds[1] || ''
+                        });
+                    }
+
                     for (const tokenId of market.clobTokenIds) {
                         this.tokenToMarket.set(tokenId, market.marketId);
                     }
@@ -229,9 +264,9 @@ class TradingBot {
             const strategy = selectStrategy(newRegime);
 
             // 4. Generate proposed orders
-            const tokenIds = this.marketTokens.get(update.marketId) || [];
-            const tokenIdYes = tokenIds[0];
-            const tokenIdNo = tokenIds[1];
+            const tokens = this.marketTokens.get(update.marketId);
+            const tokenIdYes = tokens?.yes;
+            const tokenIdNo = tokens?.no;
 
             let proposedOrders: ProposedOrder[] = [];
 
@@ -476,9 +511,10 @@ class TradingBot {
                         });
 
                         // Unsubscribe from WebSocket
-                        const tokens = this.marketTokens.get(order.marketId) || [];
-                        if (tokens.length > 0) {
-                            this.clobFeed.unsubscribe(order.marketId, tokens);
+                        const tokens = this.marketTokens.get(order.marketId);
+                        if (tokens) {
+                            const tokenArray = [tokens.yes, tokens.no].filter(Boolean);
+                            this.clobFeed.unsubscribe(order.marketId, tokenArray);
                         }
 
                         // Clear from local state maps to stop processing
@@ -493,8 +529,9 @@ class TradingBot {
                         this.marketStates.delete(order.marketId);
 
                         // Also removing from tokenToMarket to be clean
-                        for (const t of tokens) {
-                            this.tokenToMarket.delete(t);
+                        if (tokens) {
+                            if (tokens.yes) this.tokenToMarket.delete(tokens.yes);
+                            if (tokens.no) this.tokenToMarket.delete(tokens.no);
                         }
                     }
                 }
@@ -887,8 +924,17 @@ class TradingBot {
 
                     if (marketData.outcomePrices) {
                         const prices = JSON.parse(marketData.outcomePrices);
-                        resolutionPriceYes = parseFloat(prices[0]);
-                        resolutionPriceNo = parseFloat(prices[1]);
+                        const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+                        const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
+                        const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
+
+                        if (yesIndex !== -1 && noIndex !== -1) {
+                            resolutionPriceYes = parseFloat(prices[yesIndex]);
+                            resolutionPriceNo = parseFloat(prices[noIndex]);
+                        } else {
+                            resolutionPriceYes = parseFloat(prices[0]);
+                            resolutionPriceNo = parseFloat(prices[1]);
+                        }
                     }
 
                     // Determine if we won or lost
