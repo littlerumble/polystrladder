@@ -45,6 +45,7 @@ class TradingBot {
     private marketTokens: Map<string, string[]> = new Map(); // marketId -> [yesTokenId, noTokenId]
     private processingLocks: Set<string> = new Set(); // Prevent concurrent processing per market
     private pnlInterval: NodeJS.Timeout | null = null;
+    private resolutionCheckInterval: NodeJS.Timeout | null = null;
     private isRunning = false;
 
     constructor() {
@@ -122,6 +123,7 @@ class TradingBot {
             // Start periodic tasks
             this.marketLoader.startPeriodicRefresh();
             this.startPnlSnapshots();
+            this.startResolutionChecks();
 
             this.isRunning = true;
             eventBus.emit('system:ready');
@@ -614,6 +616,166 @@ class TradingBot {
     }
 
     /**
+     * Start periodic market resolution checks.
+     * Checks Gamma API for markets that have been resolved/closed.
+     */
+    private startResolutionChecks(): void {
+        // Check every 2 minutes for market resolutions
+        const interval = 120000;
+
+        this.resolutionCheckInterval = setInterval(async () => {
+            try {
+                await this.checkMarketResolutions();
+            } catch (error) {
+                logger.error('Failed to check market resolutions', { error: String(error) });
+            }
+        }, interval);
+
+        logger.info('Started market resolution checks every 2 minutes');
+    }
+
+    /**
+     * Check if any markets with positions have been resolved.
+     * If a market is closed, settle the position based on the resolution.
+     */
+    private async checkMarketResolutions(): Promise<void> {
+        const positions = await this.prisma.position.findMany({
+            include: { market: true }
+        });
+
+        for (const position of positions) {
+            if (!position.market) continue;
+
+            try {
+                const response = await axios.get(
+                    `https://gamma-api.polymarket.com/markets/${position.marketId}`,
+                    { timeout: 5000 }
+                );
+                const marketData = response.data;
+
+                // Check if market is closed/resolved
+                if (marketData.closed) {
+                    logger.info('🏁 MARKET RESOLVED', {
+                        marketId: position.marketId,
+                        question: position.market.question?.substring(0, 50),
+                        closed: marketData.closed
+                    });
+
+                    // Get the resolution price from outcomePrices
+                    let resolutionPriceYes = 0.5;
+                    let resolutionPriceNo = 0.5;
+
+                    if (marketData.outcomePrices) {
+                        const prices = JSON.parse(marketData.outcomePrices);
+                        resolutionPriceYes = parseFloat(prices[0]);
+                        resolutionPriceNo = parseFloat(prices[1]);
+                    }
+
+                    // Determine if we won or lost
+                    const hasYesPosition = position.sharesYes > 0;
+                    const hasNoPosition = position.sharesNo > 0;
+
+                    let finalValue = 0;
+                    let won = false;
+
+                    if (hasYesPosition) {
+                        // YES wins if resolution price is 1.0 (or close to it)
+                        if (resolutionPriceYes >= 0.95) {
+                            finalValue = position.sharesYes * 1.0; // Each share worth $1
+                            won = true;
+                            logger.info('🎉 RESOLUTION WIN (YES)', {
+                                marketId: position.marketId,
+                                shares: position.sharesYes,
+                                finalValue,
+                                costBasis: position.costBasisYes,
+                                profit: finalValue - position.costBasisYes
+                            });
+                        } else if (resolutionPriceYes <= 0.05) {
+                            finalValue = 0; // Each share worth $0
+                            logger.info('💀 RESOLUTION LOSS (YES)', {
+                                marketId: position.marketId,
+                                shares: position.sharesYes,
+                                costBasis: position.costBasisYes,
+                                loss: -position.costBasisYes
+                            });
+                        }
+                    }
+
+                    if (hasNoPosition) {
+                        if (resolutionPriceNo >= 0.95) {
+                            finalValue = position.sharesNo * 1.0;
+                            won = true;
+                            logger.info('🎉 RESOLUTION WIN (NO)', {
+                                marketId: position.marketId,
+                                shares: position.sharesNo,
+                                finalValue,
+                                costBasis: position.costBasisNo,
+                                profit: finalValue - position.costBasisNo
+                            });
+                        } else if (resolutionPriceNo <= 0.05) {
+                            finalValue = 0;
+                            logger.info('💀 RESOLUTION LOSS (NO)', {
+                                marketId: position.marketId,
+                                shares: position.sharesNo,
+                                costBasis: position.costBasisNo,
+                                loss: -position.costBasisNo
+                            });
+                        }
+                    }
+
+                    // Update position with realized P&L
+                    const costBasis = position.costBasisYes + position.costBasisNo;
+                    const profit = finalValue - costBasis;
+
+                    await this.prisma.position.update({
+                        where: { marketId: position.marketId },
+                        data: {
+                            sharesYes: 0,
+                            sharesNo: 0,
+                            costBasisYes: 0,
+                            costBasisNo: 0,
+                            unrealizedPnl: 0,
+                            realizedPnl: { increment: profit }
+                        }
+                    });
+
+                    // Mark market as closed in DB
+                    await this.prisma.market.update({
+                        where: { id: position.marketId },
+                        data: { closed: true, active: false }
+                    });
+
+                    // Log strategy event
+                    await this.prisma.strategyEvent.create({
+                        data: {
+                            marketId: position.marketId,
+                            regime: 'RESOLVED',
+                            strategy: 'MARKET_RESOLUTION',
+                            action: won ? 'RESOLUTION_WIN' : 'RESOLUTION_LOSS',
+                            priceYes: resolutionPriceYes,
+                            priceNo: resolutionPriceNo,
+                            details: JSON.stringify({
+                                finalValue,
+                                costBasis,
+                                profit,
+                                won
+                            })
+                        }
+                    });
+
+                    // Clean up from tracking
+                    this.marketStates.delete(position.marketId);
+                    this.marketTokens.delete(position.marketId);
+                }
+            } catch (error) {
+                // Skip this market on API error
+                logger.debug(`Failed to check resolution for ${position.marketId}: ${error}`);
+            }
+        }
+    }
+
+
+    /**
      * Take a P&L snapshot.
      * 
      * CRITICAL: Uses Gamma API for accurate prices. In-memory prices may be stale or default to 0.5.
@@ -752,6 +914,9 @@ class TradingBot {
         // Stop periodic tasks
         if (this.pnlInterval) {
             clearInterval(this.pnlInterval);
+        }
+        if (this.resolutionCheckInterval) {
+            clearInterval(this.resolutionCheckInterval);
         }
         this.marketLoader.stopPeriodicRefresh();
 
