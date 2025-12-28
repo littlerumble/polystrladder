@@ -235,7 +235,7 @@ class TradingBot {
             let proposedOrders: ProposedOrder[] = [];
 
             if (strategy === StrategyType.LADDER_COMPRESSION && tokenIdYes) {
-                proposedOrders = generateLadderOrders(updatedState, tokenIdYes);
+                proposedOrders = generateLadderOrders(updatedState, tokenIdYes, tokenIdNo);
             } else if (strategy === StrategyType.VOLATILITY_ABSORPTION && tokenIdYes && tokenIdNo) {
                 proposedOrders = generateVolatilityOrders(updatedState, tokenIdYes, tokenIdNo);
             }

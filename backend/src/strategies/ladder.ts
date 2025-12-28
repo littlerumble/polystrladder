@@ -32,7 +32,8 @@ const CONFIDENCE_WEIGHTS = [0.10, 0.15, 0.25, 0.25, 0.25];
 
 export function generateLadderOrders(
     state: MarketState,
-    tokenIdYes: string
+    tokenIdYes: string,
+    tokenIdNo?: string
 ): ProposedOrder[] {
     const config = configService.getAll();
     const orders: ProposedOrder[] = [];
@@ -40,13 +41,44 @@ export function generateLadderOrders(
     const ladderLevels: number[] = config.ladderLevels;
     const maxExposure = config.bankroll * config.maxMarketExposurePct;
     const priceYes = state.lastPriceYes;
-    const maxBuyPrice = config.maxBuyPrice || 0.85;
+    const priceNo = state.lastPriceNo;
+    const maxBuyPrice = config.maxBuyPrice || 0.92;
+    const firstLadder = ladderLevels[0] || 0.60;
 
-    // Don't buy if price is already too high (no upside left)
-    if (priceYes > maxBuyPrice) {
-        logger.debug('Price too high for ladder entry', {
+    // Determine which side to trade:
+    // - If YES >= 60%: buy YES
+    // - Else if NO >= 60%: buy NO
+    // - Else: wait (neither side has conviction)
+    let tradeSide: 'YES' | 'NO' | null = null;
+    let tradePrice: number;
+    let tokenId: string;
+
+    if (priceYes >= firstLadder && priceYes <= maxBuyPrice) {
+        tradeSide = 'YES';
+        tradePrice = priceYes;
+        tokenId = tokenIdYes;
+    } else if (priceNo >= firstLadder && priceNo <= maxBuyPrice && tokenIdNo) {
+        tradeSide = 'NO';
+        tradePrice = priceNo;
+        tokenId = tokenIdNo;
+    } else {
+        // Neither side has conviction - wait
+        logger.debug('Neither side meets ladder criteria', {
             marketId: state.marketId,
             priceYes,
+            priceNo,
+            firstLadder,
+            maxBuyPrice
+        });
+        return orders;
+    }
+
+    // Don't buy if price is already too high (no upside left)
+    if (tradePrice > maxBuyPrice) {
+        logger.debug('Price too high for ladder entry', {
+            marketId: state.marketId,
+            side: tradeSide,
+            price: tradePrice,
             maxBuyPrice
         });
         return orders;
@@ -64,23 +96,23 @@ export function generateLadderOrders(
         }
 
         // Check if price has reached this ladder level (and is still below max)
-        if (priceYes >= ladderLevel && priceYes <= maxBuyPrice) {
+        if (tradePrice >= ladderLevel && tradePrice <= maxBuyPrice) {
             // Use confidence-weighted sizing
             // Higher levels get more capital
             const weight = CONFIDENCE_WEIGHTS[i] ?? (1 / ladderLevels.length);
             const sizeUsdc = maxExposure * weight;
-            const shares = sizeUsdc / priceYes;
+            const shares = sizeUsdc / tradePrice;
 
             const order: ProposedOrder = {
                 marketId: state.marketId,
-                tokenId: tokenIdYes,
-                side: Side.YES,
-                price: priceYes,
+                tokenId: tokenId,
+                side: tradeSide === 'YES' ? Side.YES : Side.NO,
+                price: tradePrice,
                 sizeUsdc,
                 shares,
                 strategy: StrategyType.LADDER_COMPRESSION,
-                strategyDetail: `ladder_${ladderLevel}_weight_${(weight * 100).toFixed(0)}pct`,
-                confidence: calculateLadderConfidence(ladderLevel, priceYes)
+                strategyDetail: `ladder_${ladderLevel}_${tradeSide}_weight_${(weight * 100).toFixed(0)}pct`,
+                confidence: calculateLadderConfidence(ladderLevel, tradePrice)
             };
 
             orders.push(order);
@@ -90,8 +122,9 @@ export function generateLadderOrders(
                 regime: state.regime,
                 strategy: 'LADDER_COMPRESSION',
                 priceYes,
-                priceNo: state.lastPriceNo,
+                priceNo,
                 details: {
+                    side: tradeSide,
                     ladderLevel,
                     sizeUsdc,
                     shares,
