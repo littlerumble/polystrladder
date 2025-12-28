@@ -67,6 +67,8 @@ class ConfigService {
         }
         if (process.env.BOT_API_PORT) {
             this.config.apiPort = parseInt(process.env.BOT_API_PORT, 10);
+        } else if (process.env.PORT) {
+            this.config.apiPort = parseInt(process.env.PORT, 10);
         }
         if (process.env.BOT_DASHBOARD_PORT) {
             this.config.dashboardPort = parseInt(process.env.BOT_DASHBOARD_PORT, 10);
