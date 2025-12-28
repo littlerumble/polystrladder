@@ -197,25 +197,47 @@ export function markLadderFilled(state: MarketState, level: number): MarketState
  * - This lowers average entry price
  * - Only works BEFORE game starts (pre-game uncertainty, not live game volatility)
  * - Max 2 DCA buys per market to prevent over-concentration
- * 
- * Triggers:
- * - Price dropped 5%+ from average entry
- * - Game hasn't started yet
- * - Less than 2 DCA buys already made
- * - Still in MID_CONSENSUS regime (not EARLY_UNCERTAIN)
+ * - Works for BOTH YES and NO positions
  */
 export function generateDCAOrders(
     state: MarketState,
-    position: { sharesYes: number; avgEntryYes: number; dcaBuys?: number },
+    position: {
+        sharesYes: number;
+        avgEntryYes: number;
+        sharesNo: number;
+        avgEntryNo: number;
+        dcaBuys?: number
+    },
     tokenIdYes: string,
+    tokenIdNo: string | undefined,
     gameStartTime: Date | null | undefined,
     maxDCABuys: number = 2
 ): ProposedOrder[] {
     const config = configService.getAll();
     const orders: ProposedOrder[] = [];
 
-    // Only DCA if we have an existing YES position
-    if (!position || position.sharesYes <= 0 || !position.avgEntryYes || position.avgEntryYes <= 0) {
+    // Determine which side we have a position on
+    let tradeSide: 'YES' | 'NO' | null = null;
+    let shares = 0;
+    let avgEntry = 0;
+    let currentPrice = 0;
+    let tokenId = '';
+
+    if (position.sharesYes > 0 && position.avgEntryYes > 0) {
+        tradeSide = 'YES';
+        shares = position.sharesYes;
+        avgEntry = position.avgEntryYes;
+        currentPrice = state.lastPriceYes;
+        tokenId = tokenIdYes;
+    } else if (position.sharesNo > 0 && position.avgEntryNo > 0 && tokenIdNo) {
+        tradeSide = 'NO';
+        shares = position.sharesNo;
+        avgEntry = position.avgEntryNo;
+        currentPrice = state.lastPriceNo;
+        tokenId = tokenIdNo;
+    }
+
+    if (!tradeSide || shares <= 0) {
         return orders;
     }
 
@@ -239,46 +261,43 @@ export function generateDCAOrders(
         return orders;
     }
 
-    const currentPrice = state.lastPriceYes;
-
     // CRITICAL: Only DCA if price is ABOVE first ladder level (60%)
-    // If price drops below first ladder, thesis is breaking - exit instead of DCA
     const ladderConfig = configService.getAll();
     const firstLadderLevel = ladderConfig.ladderLevels[0] || 0.60;
     if (currentPrice < firstLadderLevel) {
         logger.debug('DCA blocked - price below first ladder (thesis breaking)', {
             marketId: state.marketId,
+            side: tradeSide,
             currentPrice,
             firstLadderLevel
         });
-        return orders; // Don't DCA - consensus break logic will handle exit
+        return orders;
     }
 
-    const avgEntry = position.avgEntryYes;
     const dipPct = (avgEntry - currentPrice) / avgEntry;
 
     // Only DCA if price dipped 5%+ from average entry
-    const DIP_THRESHOLD = 0.05; // 5% dip
+    const DIP_THRESHOLD = 0.05;
     if (dipPct < DIP_THRESHOLD) {
         return orders;
     }
 
-    // DCA size: 15% of max exposure (smaller than initial ladder buys)
+    // DCA size: 15% of max exposure
     const DCA_WEIGHT = 0.15;
     const maxExposure = config.bankroll * config.maxMarketExposurePct;
     const sizeUsdc = maxExposure * DCA_WEIGHT;
-    const shares = sizeUsdc / currentPrice;
+    const dcaShares = sizeUsdc / currentPrice;
 
     const order: ProposedOrder = {
         marketId: state.marketId,
-        tokenId: tokenIdYes,
-        side: Side.YES,
+        tokenId: tokenId,
+        side: tradeSide === 'YES' ? Side.YES : Side.NO,
         price: currentPrice,
         sizeUsdc,
-        shares,
-        strategy: StrategyType.LADDER_COMPRESSION, // Count as part of ladder
-        strategyDetail: `dca_buy_${(dipPct * 100).toFixed(1)}pct_dip`,
-        confidence: 0.7, // Medium confidence - it's a dip buy
+        shares: dcaShares,
+        strategy: StrategyType.LADDER_COMPRESSION,
+        strategyDetail: `dca_${tradeSide}_buy_${(dipPct * 100).toFixed(1)}pct_dip`,
+        confidence: 0.8,
         isDCA: true
     };
 
@@ -287,14 +306,15 @@ export function generateDCAOrders(
     logger.strategy('DCA_TRIGGER', {
         marketId: state.marketId,
         regime: state.regime,
-        strategy: 'DCA_BUY',
-        priceYes: currentPrice,
+        strategy: 'DCA',
+        priceYes: state.lastPriceYes,
         priceNo: state.lastPriceNo,
         details: {
+            side: tradeSide,
             avgEntry,
+            currentPrice,
             dipPct: `${(dipPct * 100).toFixed(1)}%`,
             sizeUsdc,
-            shares,
             dcaBuyNumber: dcaBuyCount + 1
         }
     });

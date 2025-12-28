@@ -109,14 +109,13 @@ export function checkMoonBagExit(
  * - If price drops below 60% (first ladder): EXIT immediately
  * - After exit: 10 minute cooldown before re-entry is allowed
  * - Re-entry only allowed at 70%+ (L2)
- * 
- * @param gameStartTime - When the match starts
- * @returns Updated state and whether to exit
+ * - Works for BOTH YES and NO positions
  */
 export function checkPreGameStopLoss(
     state: MarketState,
     currentPriceYes: number,
-    hasPosition: boolean,
+    currentPriceNo: number,
+    positionSide: 'YES' | 'NO' | null,
     gameStartTime?: Date
 ): { shouldExit: boolean; updatedState: MarketState; reason: string } {
     const ladderLevels: number[] = configService.get('ladderLevels') || [0.60, 0.70, 0.80, 0.90, 0.95];
@@ -133,11 +132,16 @@ export function checkPreGameStopLoss(
         return { shouldExit: false, updatedState, reason: 'Game is live - using regular stop loss' };
     }
 
+    // Need a position to check
+    if (!positionSide) {
+        return { shouldExit: false, updatedState, reason: '' };
+    }
+
     // Check if in cooldown
     if (state.cooldownUntil && now < state.cooldownUntil) {
-        // In cooldown period - check if price recovered enough (70%+) to allow re-entry
-        if (currentPriceYes >= secondLadder) {
-            logger.info('📈 Cooldown: Price recovered to L2 (' + (currentPriceYes * 100).toFixed(1) + '%), re-entry will be allowed after cooldown expires');
+        const priceToCheck = positionSide === 'YES' ? currentPriceYes : currentPriceNo;
+        if (priceToCheck >= secondLadder) {
+            logger.info('📈 Cooldown: Price recovered to L2 (' + (priceToCheck * 100).toFixed(1) + '%), re-entry will be allowed after cooldown expires');
         }
         return {
             shouldExit: false,
@@ -146,8 +150,9 @@ export function checkPreGameStopLoss(
         };
     }
 
-    // Check if price is below first ladder (60%)
-    if (currentPriceYes < firstLadder && hasPosition) {
+    // Check if price is below first ladder (60%) for OUR position side
+    const priceToCheck = positionSide === 'YES' ? currentPriceYes : currentPriceNo;
+    if (priceToCheck < firstLadder) {
         // STOP LOSS TRIGGERED
         updatedState.stopLossTriggeredAt = now;
         updatedState.cooldownUntil = new Date(now.getTime() + COOLDOWN_MINUTES * 60 * 1000);
@@ -157,7 +162,8 @@ export function checkPreGameStopLoss(
 
         logger.info('🛑 PRE-GAME STOP LOSS triggered', {
             marketId: state.marketId,
-            price: (currentPriceYes * 100).toFixed(1) + '%',
+            side: positionSide,
+            price: (priceToCheck * 100).toFixed(1) + '%',
             firstLadder: (firstLadder * 100).toFixed(0) + '%',
             cooldownUntil: updatedState.cooldownUntil.toISOString()
         });
@@ -165,7 +171,7 @@ export function checkPreGameStopLoss(
         return {
             shouldExit: true,
             updatedState,
-            reason: `PRE-GAME STOP: Price ${(currentPriceYes * 100).toFixed(1)}% < ${(firstLadder * 100).toFixed(0)}% (first ladder). Cooldown for ${COOLDOWN_MINUTES} min.`
+            reason: `PRE-GAME STOP (${positionSide}): Price ${(priceToCheck * 100).toFixed(1)}% < ${(firstLadder * 100).toFixed(0)}% (first ladder). Cooldown for ${COOLDOWN_MINUTES} min.`
         };
     }
 
@@ -311,20 +317,48 @@ export function shouldTakeProfit(
         }
     }
 
-    // Check NO position
-    if (position.sharesNo > 0 && position.costBasisNo > 0 && !moonBagActive) {
+    // Check NO position - same logic as YES
+    if (position.sharesNo > 0 && position.costBasisNo > 0) {
         const costBasis = position.costBasisNo;
         const currentValue = position.sharesNo * currentPriceNo;
         const unrealizedProfit = currentValue - costBasis;
         const profitPct = unrealizedProfit / costBasis;
 
-        if (profitPct >= takeProfitPct) {
+        // Profit taking - sell 60%, keep 40% moon bag
+        if (profitPct >= takeProfitPct && !moonBagActive) {
             return {
                 shouldExit: true,
                 profitPct,
-                reason: `NO Profit target: ${(profitPct * 100).toFixed(1)}% - Selling 75%`,
+                reason: `NO Profit target: ${(profitPct * 100).toFixed(1)}% >= ${(takeProfitPct * 100).toFixed(0)}% - Selling 60%, keeping 40% moon bag`,
                 isProfit: true,
-                exitPct: 0.75,
+                exitPct: 0.60,  // Same as YES: 60/40 split
+                isMoonBagExit: false
+            };
+        }
+
+        // IMMEDIATE STOP LOSS - ONLY during live games (-15%)
+        if (isLiveGame) {
+            const stopLossPct = -0.15;
+            if (profitPct <= stopLossPct) {
+                return {
+                    shouldExit: true,
+                    profitPct,
+                    reason: `🛑 LIVE STOP LOSS (NO): Down ${(profitPct * 100).toFixed(1)}% (threshold: -15%). Selling immediately.`,
+                    isProfit: false,
+                    exitPct: 1.0,
+                    isMoonBagExit: false
+                };
+            }
+        }
+
+        // Thesis stop (consensus break)
+        if (consensusBreakConfirmed) {
+            return {
+                shouldExit: true,
+                profitPct,
+                reason: `THESIS STOP (NO): Consensus broken. P&L: ${(profitPct * 100).toFixed(1)}%`,
+                isProfit: false,
+                exitPct: 1.0,
                 isMoonBagExit: false
             };
         }

@@ -255,17 +255,21 @@ class TradingBot {
             }
 
             // 5.5 Check for DCA opportunity (buy dips pre-game only)
+            // Works for BOTH YES and NO positions
             const existingPosition = this.riskManager.getPosition(update.marketId);
-            if (existingPosition && existingPosition.sharesYes > 0 && tokenIdYes) {
+            if (existingPosition && (existingPosition.sharesYes > 0 || existingPosition.sharesNo > 0)) {
                 const dcaOrders = generateDCAOrders(
                     updatedState,
                     {
                         sharesYes: existingPosition.sharesYes,
                         avgEntryYes: existingPosition.avgEntryYes || 0,
+                        sharesNo: existingPosition.sharesNo,
+                        avgEntryNo: existingPosition.avgEntryNo || 0,
                         dcaBuys: 0  // TODO: Track DCA count in position if needed
                     },
                     tokenIdYes,
-                    market?.endDate  // Use endDate as game start (for now)
+                    tokenIdNo,
+                    market?.endDate  // Use endDate as game start
                 );
                 proposedOrders.push(...dcaOrders);
             }
@@ -274,11 +278,16 @@ class TradingBot {
             // We do this BEFORE regular strategy execution to prioritize exits
             const position = this.riskManager.getPosition(update.marketId);
             if (position) {
+                // Determine which side we hold
+                const positionSide = position.sharesYes > 0 ? 'YES' as const :
+                    position.sharesNo > 0 ? 'NO' as const : null;
+
                 // Check pre-game stop loss (exit if < 60% before match)
                 const preGameCheck = exitStrategy.checkPreGameStopLoss(
                     updatedState,
                     update.priceYes,
-                    true, // hasPosition
+                    update.priceNo,
+                    positionSide,
                     market?.endDate  // Use endDate as game start time
                 );
                 updatedState = preGameCheck.updatedState;
@@ -294,6 +303,7 @@ class TradingBot {
                     if (exitOrder) {
                         logger.info('🛑 PRE-GAME STOP LOSS EXIT', {
                             marketId: update.marketId,
+                            side: positionSide,
                             reason: preGameCheck.reason
                         });
                         proposedOrders = [exitOrder];
