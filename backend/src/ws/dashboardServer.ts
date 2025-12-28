@@ -154,7 +154,7 @@ export class DashboardServer {
             }
         });
 
-        // Get portfolio summary
+        // Get portfolio summary with detailed capital breakdown
         this.app.get('/api/portfolio', async (_, res) => {
             try {
                 const positions = await this.prisma.position.findMany();
@@ -167,14 +167,41 @@ export class DashboardServer {
                     0
                 );
 
+                // Calculate realized profits from all positions (this is the locked bucket)
+                const totalRealizedProfits = positions.reduce(
+                    (sum, p) => sum + (p.realizedPnl > 0 ? p.realizedPnl : 0),
+                    0
+                );
+
+                // Also check historical trades for closed positions' profits
+                const closedTrades = await this.prisma.trade.findMany({
+                    where: { strategy: 'PROFIT_TAKING', status: 'FILLED' }
+                });
+
+                // Get the locked profits from PnL snapshot
+                const lockedProfits = latestPnl?.realizedPnl || 0;
+
+                // Tradeable cash = bankroll - active positions cost basis
+                // Note: Realized profits are SEPARATE and locked away
+                const bankroll = configService.get('bankroll') as number;
+                const tradeableCash = bankroll - totalCostBasis;
+
                 res.json({
-                    bankroll: configService.get('bankroll'),
-                    cashBalance: configService.get('bankroll') - totalCostBasis,
+                    bankroll,
+                    cashBalance: tradeableCash + lockedProfits, // Total liquid (for backward compat)
+                    tradeableCash,  // NEW: What you can actually trade with
+                    lockedProfits: lockedProfits > 0 ? lockedProfits : 0,  // NEW: Protected profits bucket
                     positionsValue: latestPnl?.positionsValue || 0,
-                    totalValue: latestPnl?.totalValue || configService.get('bankroll'),
+                    totalValue: latestPnl?.totalValue || bankroll,
                     unrealizedPnl: latestPnl?.unrealizedPnl || 0,
                     realizedPnl: latestPnl?.realizedPnl || 0,
-                    positionCount: positions.length
+                    positionCount: positions.length,
+                    // NEW: Capital allocation percentages
+                    allocation: {
+                        tradeableCashPct: bankroll > 0 ? (tradeableCash / (tradeableCash + totalCostBasis + (lockedProfits > 0 ? lockedProfits : 0))) * 100 : 100,
+                        positionsPct: bankroll > 0 ? (totalCostBasis / (tradeableCash + totalCostBasis + (lockedProfits > 0 ? lockedProfits : 0))) * 100 : 0,
+                        lockedProfitsPct: (lockedProfits > 0 && bankroll > 0) ? (lockedProfits / (tradeableCash + totalCostBasis + lockedProfits)) * 100 : 0
+                    }
                 });
             } catch (error) {
                 res.status(500).json({ error: String(error) });

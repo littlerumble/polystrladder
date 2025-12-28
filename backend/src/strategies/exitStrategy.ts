@@ -114,7 +114,57 @@ export function shouldTakeProfit(
     moonBagActive: boolean = false,
     moonBagPriceAtActivation?: number
 ): ExitCheckResult {
-    const takeProfitPct: number = Number(configService.get('takeProfitPct')) || 0.15;
+    const takeProfitPct: number = Number(configService.get('takeProfitPct')) || 0.12;
+
+    // 1. RESOLUTION CHECK - Exit immediately if market is effectively resolved
+    // If we hold YES and price > 0.98 (Win) or < 0.02 (Loss)
+    if (position.sharesYes > 0) {
+        if (currentPriceYes >= 0.98) {
+            return {
+                shouldExit: true,
+                profitPct: 0, // Calculated later
+                reason: `🎉 RESOLUTION WIN: Price ${currentPriceYes.toFixed(3)} >= 0.98. Selling for ~$1.00`,
+                isProfit: true,
+                exitPct: 1.0,
+                isMoonBagExit: false
+            };
+        }
+        if (currentPriceYes <= 0.02) {
+            return {
+                shouldExit: true,
+                profitPct: -1.0,
+                reason: `💀 RESOLUTION LOSS: Price ${currentPriceYes.toFixed(3)} <= 0.02. Closing position.`,
+                isProfit: false,
+                exitPct: 1.0,
+                isMoonBagExit: false
+            };
+        }
+    }
+    // If we hold NO and price > 0.98 (Win because NO wins if YES < 0.02) or < 0.02 (Loss)
+    // Note: Polymarket prices are YES prices usually. 
+    // currentPriceNo should be close to (1 - currentPriceYes).
+    if (position.sharesNo > 0) {
+        if (currentPriceNo >= 0.98) {
+            return {
+                shouldExit: true,
+                profitPct: 0,
+                reason: `🎉 RESOLUTION WIN (NO): Price ${currentPriceNo.toFixed(3)} >= 0.98. Selling for ~$1.00`,
+                isProfit: true,
+                exitPct: 1.0,
+                isMoonBagExit: false
+            };
+        }
+        if (currentPriceNo <= 0.02) {
+            return {
+                shouldExit: true,
+                profitPct: -1.0,
+                reason: `💀 RESOLUTION LOSS (NO): Price ${currentPriceNo.toFixed(3)} <= 0.02. Closing position.`,
+                isProfit: false,
+                exitPct: 1.0,
+                isMoonBagExit: false
+            };
+        }
+    }
 
     // Check for moon bag exit first (price dropped)
     if (moonBagActive && moonBagPriceAtActivation) {

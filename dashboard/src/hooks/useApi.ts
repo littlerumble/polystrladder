@@ -73,11 +73,18 @@ export interface StrategyEvent {
 export interface Portfolio {
     bankroll: number;
     cashBalance: number;
+    tradeableCash: number;      // NEW: Actual cash available for trading
+    lockedProfits: number;       // NEW: Protected profit bucket (not for reinvestment)
     positionsValue: number;
     totalValue: number;
     unrealizedPnl: number;
     realizedPnl: number;
     positionCount: number;
+    allocation: {                // NEW: Capital allocation percentages
+        tradeableCashPct: number;
+        positionsPct: number;
+        lockedProfitsPct: number;
+    };
 }
 
 export interface Config {

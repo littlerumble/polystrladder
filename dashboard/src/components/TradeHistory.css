@@ -4,8 +4,8 @@
 
 .trades-header {
     display: grid;
-    grid-template-columns: 120px 2fr 70px 80px 120px 150px;
-    gap: 1rem;
+    grid-template-columns: 100px 1.5fr 60px 70px 110px 80px 1.5fr;
+    gap: 0.75rem;
     padding: 0.75rem 1rem;
     background: var(--bg-tertiary);
     border-radius: 8px;
@@ -27,8 +27,8 @@
 
 .trade-row {
     display: grid;
-    grid-template-columns: 120px 2fr 70px 80px 120px 150px;
-    gap: 1rem;
+    grid-template-columns: 100px 1.5fr 60px 70px 110px 80px 1.5fr;
+    gap: 0.75rem;
     padding: 0.75rem 1rem;
     background: var(--glass-bg);
     border-radius: 8px;
@@ -43,7 +43,7 @@
 }
 
 .col-time {
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     color: var(--text-muted);
 }
 
@@ -56,18 +56,41 @@
     display: block;
 }
 
-.col-side,
-.col-price,
-.col-size,
-.col-strategy {
+.col-side {
+    display: flex;
+    justify-content: center;
+}
+
+.side-badge {
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.side-badge.yes {
+    background: rgba(0, 217, 126, 0.2);
+    color: var(--accent-green);
+}
+
+.side-badge.no {
+    background: rgba(230, 55, 87, 0.2);
+    color: var(--accent-red);
+}
+
+.col-price {
     font-size: 0.85rem;
-    color: var(--text-secondary);
+    font-weight: 600;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
 }
 
 .col-size {
+    font-size: 0.85rem;
+    color: var(--text-primary);
     display: flex;
     flex-direction: column;
-    gap: 0.1rem;
 }
 
 .shares-detail {
@@ -75,36 +98,63 @@
     color: var(--text-muted);
 }
 
-.side-badge {
-    display: inline-block;
-    padding: 0.2rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.7rem;
-    font-weight: 600;
-}
-
-.side-badge.yes {
-    background: rgba(0, 217, 126, 0.15);
-    color: var(--accent-green);
-}
-
-.side-badge.no {
-    background: rgba(230, 55, 87, 0.15);
-    color: var(--accent-red);
+.col-strategy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
 }
 
 .strategy-badge {
-    display: inline-block;
-    padding: 0.2rem 0.5rem;
+    padding: 0.2rem 0.4rem;
     border-radius: 4px;
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     font-weight: 600;
     border: 1px solid;
+    text-transform: uppercase;
+    white-space: nowrap;
+    text-align: center;
 }
 
 .strategy-detail {
-    display: block;
     font-size: 0.7rem;
     color: var(--text-muted);
-    margin-top: 0.15rem;
+}
+
+/* NEW: Reason Column */
+.col-reason {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+}
+
+.reason-icon {
+    font-size: 0.9rem;
+    flex-shrink: 0;
+}
+
+.reason-text {
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.75rem;
+}
+
+/* Scrollbar Styling */
+.trades-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.trades-body::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.trades-body::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+.trades-body::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
 }

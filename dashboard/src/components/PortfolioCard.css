@@ -5,11 +5,22 @@
     padding: 1.25rem;
     backdrop-filter: blur(10px);
     transition: transform 0.2s, box-shadow 0.2s;
+    position: relative;
 }
 
 .stat-card:hover {
     transform: translateY(-2px);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+/* Hoverable cards with tooltips */
+.stat-card.hoverable {
+    cursor: pointer;
+}
+
+.stat-card.hoverable:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
 }
 
 .stat-card.total-value {
@@ -23,6 +34,266 @@
 
 .stat-card.loss {
     border-color: rgba(230, 55, 87, 0.3);
+}
+
+/* NEW: Cash Reserve Card */
+.stat-card.cash-reserve {
+    background: linear-gradient(135deg, rgba(0, 217, 126, 0.1), rgba(0, 217, 126, 0.05));
+    border-color: rgba(0, 217, 126, 0.3);
+}
+
+.stat-card.cash-reserve .stat-value {
+    color: var(--accent-green);
+}
+
+/* NEW: Locked Profits Card */
+.stat-card.locked-profits {
+    background: linear-gradient(135deg, rgba(255, 171, 0, 0.15), rgba(255, 171, 0, 0.05));
+    border-color: rgba(255, 171, 0, 0.3);
+}
+
+.stat-card.locked-profits .stat-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.info-tooltip {
+    cursor: help;
+    font-size: 0.7rem;
+    opacity: 0.7;
+}
+
+/* Mini stat indicators in sublabel */
+.mini-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    margin-right: 0.4rem;
+}
+
+.mini-stat.positive {
+    background: rgba(0, 217, 126, 0.15);
+    color: var(--accent-green);
+}
+
+.mini-stat.negative {
+    background: rgba(230, 55, 87, 0.15);
+    color: var(--accent-red);
+}
+
+/* Pulsing dot for "Available" indicator */
+.available-tag {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.pulse-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--accent-green);
+    border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 0.5;
+        transform: scale(0.9);
+    }
+
+    50% {
+        opacity: 1;
+        transform: scale(1.1);
+    }
+}
+
+/* ======================= */
+/* P&L Breakdown Tooltip   */
+/* ======================= */
+.pnl-tooltip {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    background: var(--bg-secondary);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 1rem;
+    margin-top: 0.5rem;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+    animation: tooltipFade 0.2s ease-out;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+@keyframes tooltipFade {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.tooltip-header {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.tooltip-section {
+    margin-bottom: 0.75rem;
+}
+
+.tooltip-section:last-child {
+    margin-bottom: 0;
+}
+
+.tooltip-section.gainers {
+    border-left: 3px solid var(--accent-green);
+    padding-left: 0.75rem;
+}
+
+.tooltip-section.losers {
+    border-left: 3px solid var(--accent-red);
+    padding-left: 0.75rem;
+}
+
+.section-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 0.4rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.tooltip-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.3rem 0;
+    font-size: 0.75rem;
+}
+
+.tooltip-name {
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 60%;
+}
+
+.tooltip-value {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.tooltip-value.positive {
+    color: var(--accent-green);
+}
+
+.tooltip-value.negative {
+    color: var(--accent-red);
+}
+
+.tooltip-more {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-style: italic;
+    margin-top: 0.3rem;
+}
+
+.tooltip-empty {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-align: center;
+    padding: 0.5rem;
+}
+
+/* Full width card for Capital Breakdown */
+.stat-card.full-width {
+    grid-column: 1 / -1;
+}
+
+.stat-card.capital-breakdown {
+    background: var(--bg-card);
+}
+
+/* Allocation Bar */
+.allocation-bar {
+    display: flex;
+    height: 12px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.05);
+    margin: 1rem 0 0.75rem;
+}
+
+.allocation-segment {
+    height: 100%;
+    transition: width 0.5s ease-out;
+}
+
+.allocation-segment.cash {
+    background: linear-gradient(90deg, #00d97e, #00bc6c);
+}
+
+.allocation-segment.positions {
+    background: linear-gradient(90deg, #2c7be5, #6f42c1);
+}
+
+.allocation-segment.locked {
+    background: linear-gradient(90deg, #ffab00, #ff9500);
+}
+
+/* Allocation Legend */
+.allocation-legend {
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.legend-color {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+}
+
+.legend-color.cash {
+    background: #00d97e;
+}
+
+.legend-color.positions {
+    background: #2c7be5;
+}
+
+.legend-color.locked {
+    background: #ffab00;
 }
 
 .stat-label {
@@ -65,4 +336,21 @@
 .stat-sublabel {
     font-size: 0.75rem;
     color: var(--text-muted);
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+}
+
+/* Scrollbar for tooltip */
+.pnl-tooltip::-webkit-scrollbar {
+    width: 4px;
+}
+
+.pnl-tooltip::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.pnl-tooltip::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
 }

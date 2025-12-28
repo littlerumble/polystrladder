@@ -5,7 +5,7 @@
     "maxSingleOrderPct": 0.0025,
     "topNMarkets": 6,
     "maxActivePositions": 6,
-    "takeProfitPct": 0.15,
+    "takeProfitPct": 0.12,
     "stopLossPct": 0.20,
     "consensusBreakMinutes": 10,
     "allowedCategories": [

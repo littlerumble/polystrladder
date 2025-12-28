@@ -1,0 +1,214 @@
+.decision-panel {
+    background: var(--bg-card);
+    border-radius: 16px;
+    border: 1px solid var(--glass-border);
+    padding: 1.25rem;
+    backdrop-filter: blur(10px);
+}
+
+.decision-panel.empty {
+    min-height: 150px;
+    display: flex;
+    flex-direction: column;
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.panel-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.position-count {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 0.25rem 0.5rem;
+    border-radius: 8px;
+}
+
+.decisions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* Decision Card */
+.decision-card {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 1rem;
+    transition: all 0.2s;
+}
+
+.decision-card:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Status-specific borders */
+.decision-card.status-moon_bag {
+    border-left: 3px solid var(--accent-purple);
+}
+
+.decision-card.status-thesis_watch {
+    border-left: 3px solid var(--accent-orange);
+}
+
+.decision-card.status-profit_target {
+    border-left: 3px solid var(--accent-green);
+}
+
+.decision-card.status-active {
+    border-left: 3px solid var(--accent-blue);
+}
+
+/* Decision Header */
+.decision-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.status-icon {
+    font-size: 1rem;
+}
+
+.market-name {
+    flex: 1;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.status-badge {
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    border-radius: 6px;
+    border: 1px solid;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Decision Details */
+.decision-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.detail-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+}
+
+.detail-label {
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.detail-value {
+    color: var(--text-secondary);
+}
+
+.detail-value.pnl.positive {
+    color: var(--accent-green);
+    font-weight: 600;
+}
+
+.detail-value.pnl.negative {
+    color: var(--accent-red);
+    font-weight: 600;
+}
+
+/* Progress Bar */
+.progress-row {
+    margin-top: 0.25rem;
+}
+
+.progress-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 1;
+}
+
+.progress-bar {
+    flex: 1;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.5s ease-out;
+}
+
+.progress-text {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    min-width: 32px;
+    text-align: right;
+}
+
+/* Next Action styling */
+.next-action {
+    margin-top: 0.25rem;
+    padding-top: 0.4rem;
+    border-top: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.next-action .detail-value {
+    color: var(--accent-cyan);
+    font-style: italic;
+}
+
+/* Empty State */
+.decision-panel .empty-state {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+/* Scrollbar styling */
+.decisions-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.decisions-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.decisions-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+.decisions-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}

@@ -10,6 +10,7 @@ import Positions from './components/Positions';
 import TradeHistory from './components/TradeHistory';
 import PnLChart from './components/PnLChart';
 import StrategyEvents from './components/StrategyEvents';
+import DecisionPanel from './components/DecisionPanel';
 
 type TabType = 'scanner' | 'positions' | 'trades' | 'strategy';
 
@@ -44,9 +45,20 @@ function App() {
             />
 
             <main className="main-content">
-                {/* Portfolio Overview */}
+                {/* Portfolio Overview - Now with 7 cards including Cash Reserve and Locked Profits */}
                 <section className="portfolio-section animate-slide-up">
-                    <PortfolioCard portfolio={api.portfolio} />
+                    <PortfolioCard
+                        portfolio={api.portfolio}
+                        positions={api.positions}
+                    />
+                </section>
+
+                {/* Decision Panel - Real-time decision reasoning */}
+                <section className="decision-section animate-slide-up" style={{ animationDelay: '0.05s' }}>
+                    <DecisionPanel
+                        positions={api.positions}
+                        marketStates={api.marketStates}
+                    />
                 </section>
 
                 {/* P&L Chart */}

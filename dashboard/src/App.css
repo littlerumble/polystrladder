@@ -71,6 +71,11 @@
     backdrop-filter: blur(10px);
 }
 
+/* Decision Section */
+.decision-section {
+    width: 100%;
+}
+
 /* Tab Navigation */
 .tab-nav {
     display: flex;

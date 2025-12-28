@@ -4,8 +4,8 @@
 
 .positions-header {
     display: grid;
-    grid-template-columns: 2fr 80px 100px 100px 100px 120px;
-    gap: 1rem;
+    grid-template-columns: 100px 1.5fr 60px 80px 80px 90px 110px 100px;
+    gap: 0.75rem;
     padding: 0.75rem 1rem;
     background: var(--bg-tertiary);
     border-radius: 8px;
@@ -21,14 +21,14 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
-    max-height: 350px;
+    max-height: 400px;
     overflow-y: auto;
 }
 
 .position-row {
     display: grid;
-    grid-template-columns: 2fr 80px 100px 100px 100px 120px;
-    gap: 1rem;
+    grid-template-columns: 100px 1.5fr 60px 80px 80px 90px 110px 100px;
+    gap: 0.75rem;
     padding: 0.75rem 1rem;
     background: var(--glass-bg);
     border-radius: 8px;
@@ -42,8 +42,47 @@
     border-color: var(--glass-border);
 }
 
+/* Status-specific left borders */
+.position-row.status-moon_bag {
+    border-left: 3px solid var(--accent-purple);
+}
+
+.position-row.status-near_target {
+    border-left: 3px solid var(--accent-green);
+}
+
+.position-row.status-underwater {
+    border-left: 3px solid var(--accent-orange);
+}
+
+.position-row.status-active {
+    border-left: 3px solid var(--accent-blue);
+}
+
+/* Status Badge */
+.col-status {
+    display: flex;
+}
+
+.status-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    border: 1px solid;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.status-icon {
+    font-size: 0.7rem;
+}
+
 .col-market .market-id {
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
@@ -51,49 +90,144 @@
     display: block;
 }
 
-.col-side,
-.col-shares,
-.col-entry,
-.col-cost,
-.col-pnl {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
+.col-side {
+    display: flex;
+    gap: 0.25rem;
 }
 
 .side-badge {
-    display: inline-block;
-    padding: 0.2rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.7rem;
-    font-weight: 600;
-    margin-right: 0.25rem;
+    padding: 0.15rem 0.35rem;
+    border-radius: 3px;
+    font-size: 0.65rem;
+    font-weight: 700;
 }
 
 .side-badge.yes {
-    background: rgba(0, 217, 126, 0.15);
+    background: rgba(0, 217, 126, 0.2);
     color: var(--accent-green);
 }
 
 .side-badge.no {
-    background: rgba(230, 55, 87, 0.15);
+    background: rgba(230, 55, 87, 0.2);
     color: var(--accent-red);
 }
 
-.positive {
-    color: var(--accent-green) !important;
+.col-shares,
+.col-entry,
+.col-cost {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
 }
 
-.negative {
-    color: var(--accent-red) !important;
-}
-
-.positions-footer {
+.col-pnl {
     display: flex;
-    justify-content: space-between;
-    padding: 1rem;
+    flex-direction: column;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.col-pnl .positive {
+    color: var(--accent-green);
+}
+
+.col-pnl .negative {
+    color: var(--accent-red);
+}
+
+.pnl-pct {
+    font-size: 0.7rem;
+    font-weight: 400;
+}
+
+/* Progress Column */
+.col-progress {
+    display: flex;
+    align-items: center;
+}
+
+.progress-container {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+}
+
+.progress-bar {
+    flex: 1;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.5s ease-out;
+}
+
+.progress-text {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    min-width: 40px;
+    text-align: right;
+}
+
+/* Footer */
+.positions-footer {
+    margin-top: 0.75rem;
+    padding: 0.75rem 1rem;
     background: var(--bg-tertiary);
     border-radius: 8px;
-    margin-top: 0.5rem;
+}
+
+.footer-stats {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.footer-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.footer-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.footer-value {
     font-size: 0.85rem;
-    color: var(--text-secondary);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.footer-value.positive {
+    color: var(--accent-green);
+}
+
+.footer-value.negative {
+    color: var(--accent-red);
+}
+
+/* Scrollbar Styling */
+.positions-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.positions-body::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.positions-body::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+.positions-body::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
 }
