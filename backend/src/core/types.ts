@@ -96,6 +96,7 @@ export interface MarketState {
     lastPriceNo: number;
     priceHistory: { price: number; timestamp: Date }[];
     ladderFilled: number[];
+    activeTradeSide?: 'YES' | 'NO';    // Which side ladder levels are for (reset if switching)
     exposureYes: number;
     exposureNo: number;
     tailActive: boolean;

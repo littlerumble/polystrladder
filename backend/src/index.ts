@@ -409,7 +409,22 @@ class TradingBot {
                     // Update state based on strategy
                     if (order.strategy === StrategyType.LADDER_COMPRESSION && order.strategyDetail) {
                         const level = parseFloat(order.strategyDetail.split('_')[1]);
-                        const newState = markLadderFilled(updatedState, level);
+                        const tradeSide = order.side === Side.YES ? 'YES' : 'NO';
+
+                        // Check for side switch - if we're trading a different side, reset ladder
+                        if (updatedState.activeTradeSide && updatedState.activeTradeSide !== tradeSide) {
+                            logger.info('🔄 SIDE SWITCH confirmed - resetting ladder', {
+                                marketId: update.marketId,
+                                oldSide: updatedState.activeTradeSide,
+                                newSide: tradeSide
+                            });
+                            updatedState.ladderFilled = []; // Reset for new side
+                        }
+
+                        // Mark level filled and update active trade side
+                        let newState = markLadderFilled(updatedState, level);
+                        newState.activeTradeSide = tradeSide;
+
                         this.marketStates.set(update.marketId, newState);
                         // CRITICAL: Persist to DB so ladder level stays filled on restart
                         await this.persistMarketState(newState);
@@ -639,12 +654,15 @@ class TradingBot {
                 lastPriceNo: priceNo,
                 priceHistory: [],
                 ladderFilled: JSON.parse(dbState.ladderFilled),
+                activeTradeSide: dbState.activeTradeSide as 'YES' | 'NO' | undefined,
                 exposureYes: 0,
                 exposureNo: 0,
                 tailActive: dbState.tailActive,
                 lastUpdated: dbState.lastProcessed,
                 consensusBreakConfirmed: false,
-                moonBagActive: false
+                moonBagActive: false,
+                stopLossTriggeredAt: dbState.stopLossTriggeredAt || undefined,
+                cooldownUntil: dbState.cooldownUntil || undefined
             };
 
             // Load exposure from positions
@@ -680,6 +698,7 @@ class TradingBot {
             update: {
                 regime: state.regime,
                 ladderFilled: JSON.stringify(state.ladderFilled),
+                activeTradeSide: state.activeTradeSide || null,
                 tailActive: state.tailActive,
                 stopLossTriggeredAt: state.stopLossTriggeredAt || null,
                 cooldownUntil: state.cooldownUntil || null,
@@ -689,6 +708,7 @@ class TradingBot {
                 marketId: state.marketId,
                 regime: state.regime,
                 ladderFilled: JSON.stringify(state.ladderFilled),
+                activeTradeSide: state.activeTradeSide || null,
                 tailActive: state.tailActive,
                 stopLossTriggeredAt: state.stopLossTriggeredAt || null,
                 cooldownUntil: state.cooldownUntil || null,

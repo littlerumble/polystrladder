@@ -84,8 +84,23 @@ export function generateLadderOrders(
         return orders;
     }
 
-    // Track which levels are already filled
-    const filledLevels = new Set(state.ladderFilled);
+    // CRITICAL: Detect side switch and reset ladder if switching
+    // If we were trading YES and now want to trade NO (or vice versa), 
+    // the filled levels are for the wrong side - reset them
+    let filledLevels: Set<number>;
+    if (state.activeTradeSide && state.activeTradeSide !== tradeSide) {
+        // Side switch detected! Reset ladder for new side
+        logger.info('🔄 SIDE SWITCH detected', {
+            marketId: state.marketId,
+            oldSide: state.activeTradeSide,
+            newSide: tradeSide,
+            message: 'Resetting ladder levels for new side'
+        });
+        filledLevels = new Set();
+        // Note: The caller should update state.activeTradeSide and state.ladderFilled
+    } else {
+        filledLevels = new Set(state.ladderFilled);
+    }
 
     for (let i = 0; i < ladderLevels.length; i++) {
         const ladderLevel = ladderLevels[i];
