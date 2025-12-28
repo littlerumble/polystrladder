@@ -42,6 +42,7 @@ class TradingBot {
     private marketStates: Map<string, MarketState> = new Map();
     private tokenToMarket: Map<string, string> = new Map();
     private marketTokens: Map<string, string[]> = new Map(); // marketId -> [yesTokenId, noTokenId]
+    private processingLocks: Set<string> = new Set(); // Prevent concurrent processing per market
     private pnlInterval: NodeJS.Timeout | null = null;
     private isRunning = false;
 
@@ -177,239 +178,252 @@ class TradingBot {
         const state = this.marketStates.get(update.marketId);
         if (!state) return;
 
-        // 1. Update market state with new price
-        let updatedState = this.updateMarketState(state, update);
+        // CRITICAL: Prevent concurrent processing of the same market
+        // This fixes race condition where multiple price updates trigger duplicate trades
+        if (this.processingLocks.has(update.marketId)) {
+            logger.debug('Skipping price update - market is being processed', { marketId: update.marketId });
+            return;
+        }
+        this.processingLocks.add(update.marketId);
 
-        // 2. Classify regime
-        const market = await this.prisma.market.findUnique({
-            where: { id: update.marketId }
-        });
-        if (!market) return;
+        try {
+            // 1. Update market state with new price
+            let updatedState = this.updateMarketState(state, update);
 
-        const timeToResolution = market.endDate.getTime() - Date.now();
-        const priceHistory = updatedState.priceHistory.map(p => ({
-            price: p.price,
-            timestamp: p.timestamp
-        }));
-
-        const newRegime = classifyRegime(
-            timeToResolution,
-            update.priceYes,
-            priceHistory
-        );
-
-        // Check for regime transition
-        if (isSignificantTransition(updatedState.regime, newRegime)) {
-            logger.info('Regime transition', {
-                marketId: update.marketId,
-                from: updatedState.regime,
-                to: newRegime
+            // 2. Classify regime
+            const market = await this.prisma.market.findUnique({
+                where: { id: update.marketId }
             });
-            eventBus.emit('state:regime_change', update.marketId, updatedState.regime, newRegime);
-        }
+            if (!market) return;
 
-        updatedState.regime = newRegime;
+            const timeToResolution = market.endDate.getTime() - Date.now();
+            const priceHistory = updatedState.priceHistory.map(p => ({
+                price: p.price,
+                timestamp: p.timestamp
+            }));
 
-        // 3. Select strategy
-        const strategy = selectStrategy(newRegime);
-
-        // 4. Generate proposed orders
-        const tokenIds = this.marketTokens.get(update.marketId) || [];
-        const tokenIdYes = tokenIds[0];
-        const tokenIdNo = tokenIds[1];
-
-        let proposedOrders: ProposedOrder[] = [];
-
-        if (strategy === StrategyType.LADDER_COMPRESSION && tokenIdYes) {
-            proposedOrders = generateLadderOrders(updatedState, tokenIdYes);
-        } else if (strategy === StrategyType.VOLATILITY_ABSORPTION && tokenIdYes && tokenIdNo) {
-            proposedOrders = generateVolatilityOrders(updatedState, tokenIdYes, tokenIdNo);
-        }
-
-        // 5. Check for tail insurance opportunity
-        if (shouldConsiderTailInsurance(
-            newRegime,
-            update.priceNo,
-            updatedState.exposureYes,
-            configService.get('tailPriceThreshold'),
-            configService.get('bankroll') * 0.01
-        ) && tokenIdNo) {
-            const tailOrder = generateTailInsuranceOrder(updatedState, tokenIdNo, update.priceNo);
-            if (tailOrder) {
-                proposedOrders.push(tailOrder);
-            }
-        }
-
-        // 6. Check for Profit Taking, Moon Bag Exit, or Thesis-Based Stop Loss
-        // We do this BEFORE regular strategy execution to prioritize exits
-        const position = this.riskManager.getPosition(update.marketId);
-        if (position) {
-            // First, check and track consensus break state
-            const consensusCheck = exitStrategy.checkConsensusBreak(updatedState, update.priceYes);
-            updatedState = consensusCheck.updatedState;
-
-            // Check if we should exit (profit, moon bag exit, or thesis stop)
-            const exitCheck = exitStrategy.shouldTakeProfit(
-                position,
+            const newRegime = classifyRegime(
+                timeToResolution,
                 update.priceYes,
-                update.priceNo,
-                updatedState.consensusBreakConfirmed,
-                updatedState.moonBagActive,
-                updatedState.moonBagPriceAtActivation
+                priceHistory
             );
 
-            if (exitCheck.shouldExit && tokenIdYes && tokenIdNo) {
-                const exitOrder = exitStrategy.generateExitOrder(
-                    updatedState,
+            // Check for regime transition
+            if (isSignificantTransition(updatedState.regime, newRegime)) {
+                logger.info('Regime transition', {
+                    marketId: update.marketId,
+                    from: updatedState.regime,
+                    to: newRegime
+                });
+                eventBus.emit('state:regime_change', update.marketId, updatedState.regime, newRegime);
+            }
+
+            updatedState.regime = newRegime;
+
+            // 3. Select strategy
+            const strategy = selectStrategy(newRegime);
+
+            // 4. Generate proposed orders
+            const tokenIds = this.marketTokens.get(update.marketId) || [];
+            const tokenIdYes = tokenIds[0];
+            const tokenIdNo = tokenIds[1];
+
+            let proposedOrders: ProposedOrder[] = [];
+
+            if (strategy === StrategyType.LADDER_COMPRESSION && tokenIdYes) {
+                proposedOrders = generateLadderOrders(updatedState, tokenIdYes);
+            } else if (strategy === StrategyType.VOLATILITY_ABSORPTION && tokenIdYes && tokenIdNo) {
+                proposedOrders = generateVolatilityOrders(updatedState, tokenIdYes, tokenIdNo);
+            }
+
+            // 5. Check for tail insurance opportunity
+            if (shouldConsiderTailInsurance(
+                newRegime,
+                update.priceNo,
+                updatedState.exposureYes,
+                configService.get('tailPriceThreshold'),
+                configService.get('bankroll') * 0.01
+            ) && tokenIdNo) {
+                const tailOrder = generateTailInsuranceOrder(updatedState, tokenIdNo, update.priceNo);
+                if (tailOrder) {
+                    proposedOrders.push(tailOrder);
+                }
+            }
+
+            // 6. Check for Profit Taking, Moon Bag Exit, or Thesis-Based Stop Loss
+            // We do this BEFORE regular strategy execution to prioritize exits
+            const position = this.riskManager.getPosition(update.marketId);
+            if (position) {
+                // First, check and track consensus break state
+                const consensusCheck = exitStrategy.checkConsensusBreak(updatedState, update.priceYes);
+                updatedState = consensusCheck.updatedState;
+
+                // Check if we should exit (profit, moon bag exit, or thesis stop)
+                const exitCheck = exitStrategy.shouldTakeProfit(
                     position,
-                    tokenIdYes,
-                    tokenIdNo,
-                    exitCheck.exitPct  // 0.75 for partial, 1.0 for full
+                    update.priceYes,
+                    update.priceNo,
+                    updatedState.consensusBreakConfirmed,
+                    updatedState.moonBagActive,
+                    updatedState.moonBagPriceAtActivation
                 );
 
-                if (exitOrder) {
-                    if (exitCheck.isMoonBagExit) {
-                        logger.info('🌙 MOON BAG EXIT - Price dropped, selling remaining', {
-                            marketId: update.marketId,
-                            reason: exitCheck.reason
-                        });
-                    } else if (exitCheck.isProfit && exitCheck.exitPct < 1.0) {
-                        logger.info('💰 TAKING 75% PROFIT - Creating moon bag', {
-                            marketId: update.marketId,
-                            profitPct: (exitCheck.profitPct * 100).toFixed(1) + '%',
-                            reason: exitCheck.reason
-                        });
-                        // Activate moon bag after this order executes
-                        updatedState.moonBagActive = true;
-                        updatedState.moonBagPriceAtActivation = update.priceYes;
-                    } else if (exitCheck.isProfit) {
-                        logger.info('💰 TAKING FULL PROFIT', {
-                            marketId: update.marketId,
-                            profitPct: (exitCheck.profitPct * 100).toFixed(1) + '%'
-                        });
-                    } else {
-                        logger.info('🛑 THESIS STOP - Consensus broken', {
-                            marketId: update.marketId,
-                            pnlPct: (exitCheck.profitPct * 100).toFixed(1) + '%',
-                            reason: exitCheck.reason
-                        });
+                if (exitCheck.shouldExit && tokenIdYes && tokenIdNo) {
+                    const exitOrder = exitStrategy.generateExitOrder(
+                        updatedState,
+                        position,
+                        tokenIdYes,
+                        tokenIdNo,
+                        exitCheck.exitPct  // 0.75 for partial, 1.0 for full
+                    );
+
+                    if (exitOrder) {
+                        if (exitCheck.isMoonBagExit) {
+                            logger.info('🌙 MOON BAG EXIT - Price dropped, selling remaining', {
+                                marketId: update.marketId,
+                                reason: exitCheck.reason
+                            });
+                        } else if (exitCheck.isProfit && exitCheck.exitPct < 1.0) {
+                            logger.info('💰 TAKING 75% PROFIT - Creating moon bag', {
+                                marketId: update.marketId,
+                                profitPct: (exitCheck.profitPct * 100).toFixed(1) + '%',
+                                reason: exitCheck.reason
+                            });
+                            // Activate moon bag after this order executes
+                            updatedState.moonBagActive = true;
+                            updatedState.moonBagPriceAtActivation = update.priceYes;
+                        } else if (exitCheck.isProfit) {
+                            logger.info('💰 TAKING FULL PROFIT', {
+                                marketId: update.marketId,
+                                profitPct: (exitCheck.profitPct * 100).toFixed(1) + '%'
+                            });
+                        } else {
+                            logger.info('🛑 THESIS STOP - Consensus broken', {
+                                marketId: update.marketId,
+                                pnlPct: (exitCheck.profitPct * 100).toFixed(1) + '%',
+                                reason: exitCheck.reason
+                            });
+                        }
+
+                        // IMPORTANT: When exiting, only include the exit order
+                        proposedOrders = [exitOrder];
                     }
-
-                    // IMPORTANT: When exiting, only include the exit order
-                    proposedOrders = [exitOrder];
                 }
             }
-        }
 
-        // 6. Apply risk checks and execute
-        for (const proposed of proposedOrders) {
-            const riskResult = this.riskManager.checkOrder(proposed);
+            // 6. Apply risk checks and execute
+            for (const proposed of proposedOrders) {
+                const riskResult = this.riskManager.checkOrder(proposed);
 
-            if (!riskResult.approved) {
-                logger.debug('Order rejected by risk manager', {
-                    marketId: proposed.marketId,
-                    reason: riskResult.rejectionReason
-                });
-                continue;
-            }
-
-            const orderToExecute = riskResult.adjustedOrder || proposed;
-
-            // Convert to Order
-            const order: Order = {
-                marketId: orderToExecute.marketId,
-                tokenId: orderToExecute.tokenId,
-                side: orderToExecute.side,
-                price: orderToExecute.price,
-                sizeUsdc: orderToExecute.sizeUsdc,
-                shares: orderToExecute.shares,
-                strategy: orderToExecute.strategy,
-                strategyDetail: orderToExecute.strategyDetail,
-                isExit: orderToExecute.isExit,
-                timestamp: new Date()
-            };
-
-            // Execute
-            const result = await this.executor.execute(order);
-
-            if (result.success) {
-                // Update risk manager
-                this.riskManager.recordExecution(orderToExecute, result.filledUsdc, result.filledShares);
-
-                // Update state based on strategy
-                if (order.strategy === StrategyType.LADDER_COMPRESSION && order.strategyDetail) {
-                    const level = parseFloat(order.strategyDetail.split('_')[1]);
-                    this.marketStates.set(update.marketId, markLadderFilled(updatedState, level));
-                } else if (order.strategy === StrategyType.TAIL_INSURANCE) {
-                    this.marketStates.set(update.marketId, markTailActive(updatedState));
-                }
-
-                // Update exposure in state
-                if (order.side === Side.YES) {
-                    updatedState.exposureYes += result.filledUsdc;
-                } else {
-                    updatedState.exposureNo += result.filledUsdc;
-                }
-
-                // Log strategy event
-                await this.prisma.strategyEvent.create({
-                    data: {
-                        marketId: order.marketId,
-                        regime: newRegime,
-                        strategy: order.strategy,
-                        action: 'EXECUTED',
-                        priceYes: update.priceYes,
-                        priceNo: update.priceNo,
-                        details: JSON.stringify({
-                            side: order.side,
-                            size: result.filledUsdc,
-                            shares: result.filledShares,
-                            strategyDetail: order.strategyDetail
-                        })
-                    }
-                });
-            }
-
-
-            // If this was a full exit, clean up the market to free space
-            // We check if position is now empty/closed in RiskManager (which we just updated above)
-            // But RiskManager logic might be async or we just want to be sure here
-            if (order.isExit && result.success) {
-                const remainingPos = this.riskManager.getPosition(order.marketId);
-                // If no remaining position (it was deleted or shares are 0), we unsubscribe
-                if (!remainingPos || (remainingPos.sharesYes <= 0 && remainingPos.sharesNo <= 0)) {
-                    logger.info('Profit taken and position closed. Unsubscribing to free up slot.', {
-                        marketId: order.marketId
+                if (!riskResult.approved) {
+                    logger.debug('Order rejected by risk manager', {
+                        marketId: proposed.marketId,
+                        reason: riskResult.rejectionReason
                     });
+                    continue;
+                }
 
-                    // Unsubscribe from WebSocket
-                    const tokens = this.marketTokens.get(order.marketId) || [];
-                    if (tokens.length > 0) {
-                        this.clobFeed.unsubscribe(order.marketId, tokens);
+                const orderToExecute = riskResult.adjustedOrder || proposed;
+
+                // Convert to Order
+                const order: Order = {
+                    marketId: orderToExecute.marketId,
+                    tokenId: orderToExecute.tokenId,
+                    side: orderToExecute.side,
+                    price: orderToExecute.price,
+                    sizeUsdc: orderToExecute.sizeUsdc,
+                    shares: orderToExecute.shares,
+                    strategy: orderToExecute.strategy,
+                    strategyDetail: orderToExecute.strategyDetail,
+                    isExit: orderToExecute.isExit,
+                    timestamp: new Date()
+                };
+
+                // Execute
+                const result = await this.executor.execute(order);
+
+                if (result.success) {
+                    // Update risk manager
+                    this.riskManager.recordExecution(orderToExecute, result.filledUsdc, result.filledShares);
+
+                    // Update state based on strategy
+                    if (order.strategy === StrategyType.LADDER_COMPRESSION && order.strategyDetail) {
+                        const level = parseFloat(order.strategyDetail.split('_')[1]);
+                        this.marketStates.set(update.marketId, markLadderFilled(updatedState, level));
+                    } else if (order.strategy === StrategyType.TAIL_INSURANCE) {
+                        this.marketStates.set(update.marketId, markTailActive(updatedState));
                     }
 
-                    // Clear from local state maps to stop processing
-                    // We keep the marketState in DB/Map for history/reference but stop active tracking
-                    // or maybe we should remove it from marketStates to save memory? 
-                    // Let's remove it from active processing maps.
-                    this.marketTokens.delete(order.marketId);
-                    // Note: We don't delete from tokenToMarket immediately or strictly necessary 
-                    // unless we want to absolutely prevent any stray messages. 
-                    // But `marketTokens.delete` prevents `handlePriceUpdate` from finding tokens later if we used it.
-                    // Actually `handlePriceUpdate` uses `marketStates`.
-                    this.marketStates.delete(order.marketId);
+                    // Update exposure in state
+                    if (order.side === Side.YES) {
+                        updatedState.exposureYes += result.filledUsdc;
+                    } else {
+                        updatedState.exposureNo += result.filledUsdc;
+                    }
 
-                    // Also removing from tokenToMarket to be clean
-                    for (const t of tokens) {
-                        this.tokenToMarket.delete(t);
+                    // Log strategy event
+                    await this.prisma.strategyEvent.create({
+                        data: {
+                            marketId: order.marketId,
+                            regime: newRegime,
+                            strategy: order.strategy,
+                            action: 'EXECUTED',
+                            priceYes: update.priceYes,
+                            priceNo: update.priceNo,
+                            details: JSON.stringify({
+                                side: order.side,
+                                size: result.filledUsdc,
+                                shares: result.filledShares,
+                                strategyDetail: order.strategyDetail
+                            })
+                        }
+                    });
+                }
+
+
+                // If this was a full exit, clean up the market to free space
+                // We check if position is now empty/closed in RiskManager (which we just updated above)
+                // But RiskManager logic might be async or we just want to be sure here
+                if (order.isExit && result.success) {
+                    const remainingPos = this.riskManager.getPosition(order.marketId);
+                    // If no remaining position (it was deleted or shares are 0), we unsubscribe
+                    if (!remainingPos || (remainingPos.sharesYes <= 0 && remainingPos.sharesNo <= 0)) {
+                        logger.info('Profit taken and position closed. Unsubscribing to free up slot.', {
+                            marketId: order.marketId
+                        });
+
+                        // Unsubscribe from WebSocket
+                        const tokens = this.marketTokens.get(order.marketId) || [];
+                        if (tokens.length > 0) {
+                            this.clobFeed.unsubscribe(order.marketId, tokens);
+                        }
+
+                        // Clear from local state maps to stop processing
+                        // We keep the marketState in DB/Map for history/reference but stop active tracking
+                        // or maybe we should remove it from marketStates to save memory? 
+                        // Let's remove it from active processing maps.
+                        this.marketTokens.delete(order.marketId);
+                        // Note: We don't delete from tokenToMarket immediately or strictly necessary 
+                        // unless we want to absolutely prevent any stray messages. 
+                        // But `marketTokens.delete` prevents `handlePriceUpdate` from finding tokens later if we used it.
+                        // Actually `handlePriceUpdate` uses `marketStates`.
+                        this.marketStates.delete(order.marketId);
+
+                        // Also removing from tokenToMarket to be clean
+                        for (const t of tokens) {
+                            this.tokenToMarket.delete(t);
+                        }
                     }
                 }
             }
-        }
 
-        // 7. Save updated state
-        this.marketStates.set(update.marketId, updatedState);
-        await this.persistMarketState(updatedState);
+            // 7. Save updated state
+            this.marketStates.set(update.marketId, updatedState);
+            await this.persistMarketState(updatedState);
+        } finally {
+            // ALWAYS release the lock, even on error
+            this.processingLocks.delete(update.marketId);
+        }
     }
 
     /**
