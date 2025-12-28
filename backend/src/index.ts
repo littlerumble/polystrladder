@@ -376,9 +376,16 @@ class TradingBot {
                     // Update state based on strategy
                     if (order.strategy === StrategyType.LADDER_COMPRESSION && order.strategyDetail) {
                         const level = parseFloat(order.strategyDetail.split('_')[1]);
-                        this.marketStates.set(update.marketId, markLadderFilled(updatedState, level));
+                        const newState = markLadderFilled(updatedState, level);
+                        this.marketStates.set(update.marketId, newState);
+                        // CRITICAL: Persist to DB so ladder level stays filled on restart
+                        await this.persistMarketState(newState);
+                        updatedState = newState;
                     } else if (order.strategy === StrategyType.TAIL_INSURANCE) {
-                        this.marketStates.set(update.marketId, markTailActive(updatedState));
+                        const newState = markTailActive(updatedState);
+                        this.marketStates.set(update.marketId, newState);
+                        await this.persistMarketState(newState);
+                        updatedState = newState;
                     }
 
                     // Update exposure in state
