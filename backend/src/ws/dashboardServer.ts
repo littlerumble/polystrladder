@@ -179,7 +179,14 @@ export class DashboardServer {
      */
     private async getPositionsWithLivePnl(): Promise<any[]> {
         const positions = await this.prisma.position.findMany({
-            include: { market: true }
+            include: { market: true },
+            where: {
+                // Only get positions that actually have shares
+                OR: [
+                    { sharesYes: { gt: 0.0001 } },  // Small threshold to avoid floating point issues
+                    { sharesNo: { gt: 0.0001 } }
+                ]
+            }
         });
 
         // Parallel processing
