@@ -116,7 +116,8 @@ class TradingBot {
             this.clobFeed.subscribeToMarkets(
                 markets.map(m => ({
                     marketId: m.marketId,
-                    clobTokenIds: m.clobTokenIds
+                    clobTokenIds: m.clobTokenIds,
+                    outcomes: m.outcomes  // CRITICAL: Pass outcomes so we know which token is YES vs NO
                 }))
             );
 

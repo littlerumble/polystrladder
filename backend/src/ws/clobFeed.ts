@@ -271,29 +271,46 @@ export class ClobFeed {
     /**
      * Subscribe to multiple markets.
      */
-    subscribeToMarkets(markets: Array<{ marketId: string; clobTokenIds: string[] }>): void {
+    subscribeToMarkets(markets: Array<{ marketId: string; clobTokenIds: string[]; outcomes: string[] }>): void {
         const allTokenIds: string[] = [];
 
         for (const market of markets) {
-            // Polymarket API returns token IDs in order of outcomes.
-            // For binary markets, active usually has outcomes ["Yes", "No"].
-            // So index 0 is YES, index 1 is NO.
-            if (market.clobTokenIds.length >= 2) {
-                const yesTokenId = market.clobTokenIds[0];
-                const noTokenId = market.clobTokenIds[1];
+            // CRITICAL: Use outcomes field to determine which token is YES vs NO
+            // clobTokenIds order matches outcomes order (just like outcomePrices)
+            // outcomes could be ["Yes", "No"] or ["No", "Yes"]
 
-                this.subscribedTokens.set(yesTokenId, market.marketId);
-                this.tokenSides.set(yesTokenId, 'YES');
-                allTokenIds.push(yesTokenId);
+            if (market.clobTokenIds.length >= 2 && market.outcomes.length >= 2) {
+                const yesIndex = market.outcomes.findIndex(o => o.toLowerCase() === 'yes');
+                const noIndex = market.outcomes.findIndex(o => o.toLowerCase() === 'no');
 
-                this.subscribedTokens.set(noTokenId, market.marketId);
-                this.tokenSides.set(noTokenId, 'NO');
-                allTokenIds.push(noTokenId);
+                if (yesIndex !== -1 && noIndex !== -1) {
+                    const yesTokenId = market.clobTokenIds[yesIndex];
+                    const noTokenId = market.clobTokenIds[noIndex];
+
+                    this.subscribedTokens.set(yesTokenId, market.marketId);
+                    this.tokenSides.set(yesTokenId, 'YES');
+                    allTokenIds.push(yesTokenId);
+
+                    this.subscribedTokens.set(noTokenId, market.marketId);
+                    this.tokenSides.set(noTokenId, 'NO');
+                    allTokenIds.push(noTokenId);
+                } else {
+                    // Non-standard outcomes - fallback to first=YES (log warning)
+                    logger.warn(`Non-standard outcomes for ${market.marketId}: ${JSON.stringify(market.outcomes)}`);
+                    this.subscribedTokens.set(market.clobTokenIds[0], market.marketId);
+                    this.tokenSides.set(market.clobTokenIds[0], 'YES');
+                    allTokenIds.push(market.clobTokenIds[0]);
+                    if (market.clobTokenIds[1]) {
+                        this.subscribedTokens.set(market.clobTokenIds[1], market.marketId);
+                        this.tokenSides.set(market.clobTokenIds[1], 'NO');
+                        allTokenIds.push(market.clobTokenIds[1]);
+                    }
+                }
             } else {
-                // Fallback for single token or weird markets
+                // Fallback for single token or missing outcomes
                 for (const tokenId of market.clobTokenIds) {
                     this.subscribedTokens.set(tokenId, market.marketId);
-                    this.tokenSides.set(tokenId, 'YES'); // Assume YES if unsure
+                    this.tokenSides.set(tokenId, 'YES');
                     allTokenIds.push(tokenId);
                 }
             }
