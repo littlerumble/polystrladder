@@ -43,10 +43,10 @@ export default function StrategyEvents({ events }: StrategyEventsProps) {
             </div>
             <div className="events-body">
                 {events.map(event => {
-                    // let details: Record<string, unknown> = {};
-                    // try {
-                    //     details = JSON.parse(event.details || '{}');
-                    // } catch { }
+                    let details: Record<string, unknown> = {};
+                    try {
+                        details = JSON.parse(event.details || '{}');
+                    } catch { }
 
                     return (
                         <div key={event.id} className="event-row">
