@@ -161,7 +161,11 @@ export class ClobFeed {
             return; // No price info
         }
 
-        const side = this.tokenSides.get(msg.asset_id) || 'YES';
+        const side = this.tokenSides.get(msg.asset_id);
+        if (!side) {
+            // logger.debug('Skipping update for unknown token side', { tokenId: msg.asset_id, marketId });
+            return;
+        }
         const priceYes = side === 'YES' ? rawPrice : (1 - rawPrice);
 
         // precise logic:
@@ -200,7 +204,12 @@ export class ClobFeed {
         marketId: string
     ): void {
         const rawPrice = parseFloat(msg.price);
-        const side = this.tokenSides.get(msg.asset_id) || 'YES';
+        const side = this.tokenSides.get(msg.asset_id);
+        if (!side) {
+            logger.debug('Skipping price message for unknown token side', { tokenId: msg.asset_id, marketId });
+            return;
+        }
+
         const priceYes = side === 'YES' ? rawPrice : (1 - rawPrice);
 
         const update: PriceUpdate = {

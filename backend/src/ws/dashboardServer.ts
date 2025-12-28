@@ -180,20 +180,27 @@ export class DashboardServer {
         // Get portfolio summary with detailed capital breakdown and live P&L
         this.app.get('/api/portfolio', async (_, res) => {
             try {
+                // Fetch positions with market data to ensure we can look up prices
                 const [positions, latestPnl] = await Promise.all([
                     this.prisma.position.findMany({ include: { market: true } }),
                     this.prisma.pnlSnapshot.findFirst({ orderBy: { timestamp: 'desc' } })
                 ]);
 
-                // Calculate total cost basis and LIVE unrealized P&L
+                // 1. Calculate Synchronous Totals (Cost Basis, Realized P&L from Positions)
                 let totalCostBasis = 0;
+                let totalRealizedPnl = 0;
+
+                for (const pos of positions) {
+                    totalCostBasis += (pos.costBasisYes + pos.costBasisNo);
+                    totalRealizedPnl += pos.realizedPnl;
+                }
+
+                // 2. Calculate Asynchronous Totals (Unrealized P&L using Live Prices)
                 let totalUnrealizedPnl = 0;
                 let totalPositionsValue = 0;
 
-                // Fetch latest prices for all positions
-                for (const pos of positions) {
-                    totalCostBasis += (pos.costBasisYes + pos.costBasisNo);
-
+                // Use Promise.all to fetch prices in parallel - more robust than sequential loop
+                const priceResults = await Promise.all(positions.map(async (pos) => {
                     const latestPrice = await this.prisma.priceHistory.findFirst({
                         where: { marketId: pos.marketId },
                         orderBy: { timestamp: 'desc' }
@@ -204,46 +211,39 @@ export class DashboardServer {
                         const noValue = pos.sharesNo * latestPrice.priceNo;
                         const val = yesValue + noValue;
                         const cost = pos.costBasisYes + pos.costBasisNo;
-
-                        totalPositionsValue += val;
-                        totalUnrealizedPnl += (val - cost);
-                    } else {
-                        // Fallback to cost basis if no price
-                        const cost = pos.costBasisYes + pos.costBasisNo;
-                        totalPositionsValue += cost;
+                        return { val, pnl: val - cost };
                     }
-                }
 
-                // Calculate realized profits from all positions (this is the locked bucket)
-                const totalRealizedProfits = positions.reduce(
-                    (sum, p) => sum + (p.realizedPnl > 0 ? p.realizedPnl : 0),
-                    0
-                );
+                    // Fallback if price missing
+                    const cost = pos.costBasisYes + pos.costBasisNo;
+                    return { val: cost, pnl: 0 };
+                }));
 
-                // Also check historical trades for closed positions' profits
-                const closedTrades = await this.prisma.trade.findMany({
-                    where: { strategy: 'PROFIT_TAKING', status: 'FILLED' }
+                // Sum up price results
+                priceResults.forEach(r => {
+                    totalPositionsValue += r.val;
+                    totalUnrealizedPnl += r.pnl;
                 });
 
-                // Get the locked profits from PnL snapshot
+                // 3. Prepare Response Data
+
+                // "Locked Profits" bucket logic
                 const lockedProfits = latestPnl?.realizedPnl || 0;
 
-                // Tradeable cash = bankroll - active positions cost basis
-                // Note: Realized profits are SEPARATE and locked away
                 const bankroll = configService.get('bankroll') as number;
                 const tradeableCash = bankroll - totalCostBasis;
 
                 res.json({
                     bankroll,
-                    cashBalance: tradeableCash + lockedProfits, // Total liquid (for backward compat)
-                    tradeableCash,  // NEW: What you can actually trade with
-                    lockedProfits: lockedProfits > 0 ? lockedProfits : 0,  // NEW: Protected profits bucket
+                    cashBalance: tradeableCash + lockedProfits,
+                    tradeableCash,
+                    lockedProfits: lockedProfits > 0 ? lockedProfits : 0,
                     positionsValue: totalPositionsValue,
                     totalValue: tradeableCash + lockedProfits + totalPositionsValue,
                     unrealizedPnl: totalUnrealizedPnl,
-                    realizedPnl: latestPnl?.realizedPnl || 0,
+                    // FIX: Return total realized P&L from positions so losses are shown
+                    realizedPnl: totalRealizedPnl,
                     positionCount: positions.length,
-                    // NEW: Capital allocation percentages
                     allocation: {
                         tradeableCashPct: bankroll > 0 ? (tradeableCash / (tradeableCash + totalCostBasis + (lockedProfits > 0 ? lockedProfits : 0))) * 100 : 100,
                         positionsPct: bankroll > 0 ? (totalCostBasis / (tradeableCash + totalCostBasis + (lockedProfits > 0 ? lockedProfits : 0))) * 100 : 0,
