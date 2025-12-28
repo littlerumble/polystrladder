@@ -25,7 +25,10 @@ function getEntryReason(state: MarketState): string {
         ? ladderFilled.replace(/[\[\]]/g, '').split(',').filter(Boolean)
         : [];
 
-    if (levels.length === 0) return 'Analyzing entry opportunities';
+    if (levels.length === 0) {
+        // If we have a position but no ladder info, it might be another strategy or pre-existing
+        return 'Active position (Monitoring)';
+    }
 
     const lastLevel = levels[levels.length - 1];
     const levelPercent = (parseFloat(lastLevel) * 100).toFixed(0);
@@ -60,8 +63,8 @@ function getPositionStatus(position: Position, state?: MarketState): {
         };
     }
 
-    // Check if approaching profit target (15%)
-    const profitTarget = 0.15;
+    // Check if approaching profit target (12%)
+    const profitTarget = 0.12;
     if (profitPct >= profitTarget) {
         return {
             status: 'PROFIT_TARGET',
@@ -78,7 +81,7 @@ function getPositionStatus(position: Position, state?: MarketState): {
             status: 'ACTIVE',
             reason: `On track: ${formatPercent(profitPct)} profit`,
             progress: progressToTarget,
-            nextAction: `Will sell 75% at +15% (${remaining}% away)`
+            nextAction: `Will sell 75% at +12% (${remaining}% away)`
         };
     }
 

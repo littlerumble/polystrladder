@@ -41,6 +41,7 @@ export class ClobFeed {
     private prisma: PrismaClient;
     private ws: WebSocket | null = null;
     private subscribedTokens: Map<string, string> = new Map(); // tokenId -> marketId
+    private tokenSides: Map<string, 'YES' | 'NO'> = new Map(); // tokenId -> side
     private reconnectAttempts = 0;
     private maxReconnectAttempts = 10;
     private isShuttingDown = false;
@@ -149,24 +150,27 @@ export class ClobFeed {
         const bestAsk = msg.asks.length > 0 ? parseFloat(msg.asks[0].price) : undefined;
 
         // Calculate mid price
-        let priceYes: number;
+        let rawPrice: number;
         if (bestBid !== undefined && bestAsk !== undefined) {
-            priceYes = (bestBid + bestAsk) / 2;
+            rawPrice = (bestBid + bestAsk) / 2;
         } else if (bestBid !== undefined) {
-            priceYes = bestBid;
+            rawPrice = bestBid;
         } else if (bestAsk !== undefined) {
-            priceYes = bestAsk;
+            rawPrice = bestAsk;
         } else {
             return; // No price info
         }
+
+        const side = this.tokenSides.get(msg.asset_id) || 'YES';
+        const priceYes = side === 'YES' ? rawPrice : (1 - rawPrice);
 
         const update: PriceUpdate = {
             marketId,
             tokenId: msg.asset_id,
             priceYes,
             priceNo: 1 - priceYes,
-            bestBidYes: bestBid,
-            bestAskYes: bestAsk,
+            bestBidYes: side === 'YES' ? bestBid : undefined, // Bids for NO are Asks for YES ideally, but simpler to omit for now
+            bestAskYes: side === 'YES' ? bestAsk : undefined,
             timestamp: new Date(msg.timestamp)
         };
 
@@ -180,7 +184,9 @@ export class ClobFeed {
         msg: ClobPriceChangeMessage | ClobLastTradePriceMessage,
         marketId: string
     ): void {
-        const priceYes = parseFloat(msg.price);
+        const rawPrice = parseFloat(msg.price);
+        const side = this.tokenSides.get(msg.asset_id) || 'YES';
+        const priceYes = side === 'YES' ? rawPrice : (1 - rawPrice);
 
         const update: PriceUpdate = {
             marketId,
@@ -245,9 +251,27 @@ export class ClobFeed {
         const allTokenIds: string[] = [];
 
         for (const market of markets) {
-            for (const tokenId of market.clobTokenIds) {
-                this.subscribedTokens.set(tokenId, market.marketId);
-                allTokenIds.push(tokenId);
+            // Polymarket API returns token IDs in order of outcomes.
+            // For binary markets, active usually has outcomes ["Yes", "No"].
+            // So index 0 is YES, index 1 is NO.
+            if (market.clobTokenIds.length >= 2) {
+                const yesTokenId = market.clobTokenIds[0];
+                const noTokenId = market.clobTokenIds[1];
+
+                this.subscribedTokens.set(yesTokenId, market.marketId);
+                this.tokenSides.set(yesTokenId, 'YES');
+                allTokenIds.push(yesTokenId);
+
+                this.subscribedTokens.set(noTokenId, market.marketId);
+                this.tokenSides.set(noTokenId, 'NO');
+                allTokenIds.push(noTokenId);
+            } else {
+                // Fallback for single token or weird markets
+                for (const tokenId of market.clobTokenIds) {
+                    this.subscribedTokens.set(tokenId, market.marketId);
+                    this.tokenSides.set(tokenId, 'YES'); // Assume YES if unsure
+                    allTokenIds.push(tokenId);
+                }
             }
         }
 

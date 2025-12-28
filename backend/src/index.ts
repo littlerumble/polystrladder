@@ -572,6 +572,8 @@ class TradingBot {
         let realizedPnl = 0;
         const cashBalance = this.riskManager.getCashBalance();
 
+        const positionUpdates = [];
+
         for (const position of positions) {
             const prices = currentPrices.get(position.marketId);
             if (prices) {
@@ -580,9 +582,24 @@ class TradingBot {
                 positionsValue += yesValue + noValue;
 
                 const costBasis = position.costBasisYes + position.costBasisNo;
-                unrealizedPnl += (yesValue + noValue) - costBasis;
+                // Calculate P&L for this specific position
+                const positionPnl = (yesValue + noValue) - costBasis;
+                unrealizedPnl += positionPnl;
+
+                // Queue update for this position
+                positionUpdates.push(
+                    this.prisma.position.update({
+                        where: { marketId: position.marketId },
+                        data: { unrealizedPnl: positionPnl }
+                    })
+                );
             }
             realizedPnl += position.realizedPnl;
+        }
+
+        // Execute all position updates
+        if (positionUpdates.length > 0) {
+            await Promise.all(positionUpdates);
         }
 
         const totalValue = cashBalance + positionsValue;

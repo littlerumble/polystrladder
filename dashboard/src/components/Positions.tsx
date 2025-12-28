@@ -33,8 +33,8 @@ function getPositionStatus(position: Position): {
         };
     }
 
-    // Near profit target (>10% profit, approaching 15%)
-    if (profitPct >= 0.10) {
+    // Near profit target (>9% profit, approaching 12%)
+    if (profitPct >= 0.09) {
         return {
             status: 'NEAR_TARGET',
             label: 'Near Target',
@@ -66,7 +66,7 @@ function getPositionStatus(position: Position): {
 function getProfitProgress(position: Position): number {
     const costBasis = position.costBasisYes + position.costBasisNo;
     const profitPct = costBasis > 0 ? position.unrealizedPnl / costBasis : 0;
-    const targetPct = 0.15;
+    const targetPct = 0.12;
     return Math.min(100, Math.max(0, (profitPct / targetPct) * 100));
 }
 
