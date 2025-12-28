@@ -9,7 +9,8 @@ import {
     PriceUpdate,
     ProposedOrder,
     Order,
-    Side
+    Side,
+    MarketData
 } from './core/types.js';
 
 // Components
@@ -147,7 +148,7 @@ class TradingBot {
         });
 
         // Handle new markets from periodic refresh
-        eventBus.on('market:filtered', async (markets) => {
+        eventBus.on('market:filtered', async (markets: MarketData[]) => {
             for (const market of markets) {
                 if (!this.marketTokens.has(market.marketId)) {
                     this.marketTokens.set(market.marketId, market.clobTokenIds);

@@ -5,7 +5,14 @@ import { PrismaClient } from '@prisma/client';
 import { configService } from '../config/configService.js';
 import { createLogger } from '../core/logger.js';
 import eventBus from '../core/eventBus.js';
-import { DashboardUpdate } from '../core/types.js';
+import {
+    DashboardUpdate,
+    PriceUpdate,
+    ExecutionResult,
+    Position,
+    PortfolioState,
+    StrategyEventData
+} from '../core/types.js';
 
 const logger = createLogger('Dashboard');
 
@@ -197,7 +204,7 @@ export class DashboardServer {
         });
 
         // Forward specific events as dashboard updates
-        eventBus.on('price:update', (data) => {
+        eventBus.on('price:update', (data: PriceUpdate) => {
             this.io.emit('update', {
                 type: 'MARKET_UPDATE',
                 data,
@@ -205,7 +212,7 @@ export class DashboardServer {
             });
         });
 
-        eventBus.on('execution:result', (data) => {
+        eventBus.on('execution:result', (data: ExecutionResult) => {
             this.io.emit('update', {
                 type: 'TRADE',
                 data,
@@ -213,7 +220,7 @@ export class DashboardServer {
             });
         });
 
-        eventBus.on('position:update', (data) => {
+        eventBus.on('position:update', (data: Position) => {
             this.io.emit('update', {
                 type: 'POSITION',
                 data,
@@ -221,7 +228,7 @@ export class DashboardServer {
             });
         });
 
-        eventBus.on('portfolio:update', (data) => {
+        eventBus.on('portfolio:update', (data: PortfolioState) => {
             this.io.emit('update', {
                 type: 'PNL',
                 data,
@@ -229,7 +236,7 @@ export class DashboardServer {
             });
         });
 
-        eventBus.on('strategy:event', (data) => {
+        eventBus.on('strategy:event', (data: StrategyEventData) => {
             this.io.emit('update', {
                 type: 'STRATEGY_EVENT',
                 data,
