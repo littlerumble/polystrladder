@@ -117,7 +117,12 @@ export class DashboardServer {
                         const noValue = pos.sharesNo * latestPrice.priceNo;
                         const costBasis = pos.costBasisYes + pos.costBasisNo;
                         const unrealizedPnl = (yesValue + noValue) - costBasis;
-                        return { ...pos, unrealizedPnl };
+                        return {
+                            ...pos,
+                            unrealizedPnl,
+                            currentPriceYes: latestPrice.priceYes,
+                            currentPriceNo: latestPrice.priceNo
+                        };
                     }
                     return pos;
                 }));
@@ -176,7 +181,7 @@ export class DashboardServer {
         this.app.get('/api/portfolio', async (_, res) => {
             try {
                 const [positions, latestPnl] = await Promise.all([
-                    this.prisma.position.findMany(),
+                    this.prisma.position.findMany({ include: { market: true } }),
                     this.prisma.pnlSnapshot.findFirst({ orderBy: { timestamp: 'desc' } })
                 ]);
 

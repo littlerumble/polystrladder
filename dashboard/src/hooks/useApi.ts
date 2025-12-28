@@ -32,6 +32,8 @@ export interface Position {
     unrealizedPnl: number;
     realizedPnl: number;
     market?: Market;
+    currentPriceYes?: number;
+    currentPriceNo?: number;
 }
 
 export interface Trade {

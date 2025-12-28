@@ -18,6 +18,29 @@ function formatPercent(value: number): string {
     return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)}%`;
 }
 
+function formatPriceDisplay(position: Position): JSX.Element {
+    const parts = [];
+    if (position.sharesYes > 0) {
+        const entry = position.avgEntryYes || 0;
+        const current = position.currentPriceYes || 0;
+        parts.push(
+            <span key="yes" className="price-detail">
+                YES: {entry.toFixed(2)}¢ → {current.toFixed(2)}¢
+            </span>
+        );
+    }
+    if (position.sharesNo > 0) {
+        const entry = position.avgEntryNo || 0;
+        const current = position.currentPriceNo || 0;
+        parts.push(
+            <span key="no" className="price-detail">
+                NO: {entry.toFixed(2)}¢ → {current.toFixed(2)}¢
+            </span>
+        );
+    }
+    return <div className="price-comparison">{parts}</div>;
+}
+
 // Helper to get entry reason from ladder levels
 function getEntryReason(state: MarketState): string {
     const ladderFilled = state.ladderFilled || '';
@@ -184,6 +207,11 @@ export default function DecisionPanel({ positions, marketStates }: DecisionPanel
                                     <span className={`detail-value pnl ${profitPct >= 0 ? 'positive' : 'negative'}`}>
                                         {formatCurrency(position.unrealizedPnl)} ({formatPercent(profitPct)})
                                     </span>
+                                </div>
+
+                                <div className="detail-row">
+                                    <span className="detail-label">Prices:</span>
+                                    {formatPriceDisplay(position)}
                                 </div>
 
                                 {status.progress !== undefined && (
