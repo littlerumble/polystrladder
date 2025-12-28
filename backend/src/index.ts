@@ -467,9 +467,18 @@ class TradingBot {
             // Use default 0.5, WebSocket will update it
         }
 
+        // Classify regime based on live price (not default to MID_CONSENSUS)
+        // If price is above 0.55, it should be MID_CONSENSUS (not EARLY_UNCERTAIN)
+        let initialRegime: MarketRegime;
+        if (priceYes >= 0.45 && priceYes <= 0.55) {
+            initialRegime = MarketRegime.EARLY_UNCERTAIN;
+        } else {
+            initialRegime = MarketRegime.MID_CONSENSUS;
+        }
+
         const state: MarketState = {
             marketId,
-            regime: MarketRegime.MID_CONSENSUS,
+            regime: initialRegime,
             lastPriceYes: priceYes,
             lastPriceNo: priceNo,
             priceHistory: [],
@@ -482,6 +491,9 @@ class TradingBot {
             moonBagActive: false
         };
         this.marketStates.set(marketId, state);
+
+        // Persist immediately so dashboard reflects correct regime
+        await this.persistMarketState(state);
     }
 
 
