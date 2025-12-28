@@ -16,6 +16,8 @@ import {
 
 const logger = createLogger('Dashboard');
 
+import { setupProductionServer } from '../productionServer.js';
+
 /**
  * Dashboard Server - Serves REST API and WebSocket for the React dashboard.
  */
@@ -38,6 +40,10 @@ export class DashboardServer {
 
         this.setupMiddleware();
         this.setupRoutes();
+
+        // Setup static file serving for production
+        setupProductionServer(this, this.app);
+
         this.setupEventForwarding();
     }
 
