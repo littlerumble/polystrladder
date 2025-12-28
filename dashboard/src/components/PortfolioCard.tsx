@@ -34,9 +34,9 @@ function categorizePositions(positions: Position[]): {
         const pct = costBasis > 0 ? (pos.unrealizedPnl / costBasis) * 100 : 0;
         const name = pos.market?.question?.substring(0, 35) || pos.marketId.substring(0, 20);
 
-        if (pos.unrealizedPnl >= 0) {
+        if (pos.unrealizedPnl > 0) {
             gainers.push({ name, pnl: pos.unrealizedPnl, pct });
-        } else {
+        } else if (pos.unrealizedPnl < 0) {
             losers.push({ name, pnl: pos.unrealizedPnl, pct });
         }
     }
@@ -146,8 +146,8 @@ export default function PortfolioCard({ portfolio, positions = [] }: PortfolioCa
                     {portfolio.unrealizedPnl >= 0 ? '+' : ''}{formatCurrency(portfolio.unrealizedPnl)}
                 </div>
                 <div className="stat-sublabel">
-                    {gainers.length > 0 && <span className="mini-stat positive">↑{gainers.length} winning</span>}
-                    {losers.length > 0 && <span className="mini-stat negative">↓{losers.length} losing</span>}
+                    <span className="mini-stat positive">↑{gainers.length} Up</span>
+                    <span className="mini-stat negative">↓{losers.length} Down</span>
                 </div>
 
                 {/* Tooltip showing breakdown */}
@@ -207,8 +207,8 @@ export default function PortfolioCard({ portfolio, positions = [] }: PortfolioCa
                     {portfolio.realizedPnl >= 0 ? '+' : ''}{formatCurrency(portfolio.realizedPnl)}
                 </div>
                 <div className="stat-sublabel">
-                    {realizedProfits.length > 0 && <span className="mini-stat positive">↑{realizedProfits.length} profits</span>}
-                    {realizedLosses.length > 0 && <span className="mini-stat negative">↓{realizedLosses.length} losses</span>}
+                    <span className="mini-stat positive">↑{realizedProfits.length} Winners</span>
+                    <span className="mini-stat negative">↓{realizedLosses.length} Losers</span>
                 </div>
 
                 {/* Tooltip showing breakdown */}

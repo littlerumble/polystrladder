@@ -60,6 +60,8 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 1rem;
+    position: relative;
+    z-index: 10;
 }
 
 /* Chart Section */
@@ -74,6 +76,8 @@
 /* Decision Section */
 .decision-section {
     width: 100%;
+    position: relative;
+    z-index: 5;
 }
 
 /* Tab Navigation */
