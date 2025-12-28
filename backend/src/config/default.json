@@ -4,7 +4,7 @@
     "maxMarketExposurePct": 0.05,
     "maxSingleOrderPct": 0.0125,
     "topNMarkets": 6,
-    "maxActivePositions": 6,
+    "maxActivePositions": 50,
     "takeProfitPct": 0.20,
     "stopLossPct": 0.20,
     "consensusBreakMinutes": 0,
