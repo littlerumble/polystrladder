@@ -1,0 +1,68 @@
+.stat-card {
+    background: var(--bg-card);
+    border-radius: 16px;
+    border: 1px solid var(--glass-border);
+    padding: 1.25rem;
+    backdrop-filter: blur(10px);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.stat-card.total-value {
+    background: linear-gradient(135deg, rgba(44, 123, 229, 0.15), rgba(111, 66, 193, 0.15));
+    border-color: rgba(44, 123, 229, 0.3);
+}
+
+.stat-card.profit {
+    border-color: rgba(0, 217, 126, 0.3);
+}
+
+.stat-card.loss {
+    border-color: rgba(230, 55, 87, 0.3);
+}
+
+.stat-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.5rem;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 0.25rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.stat-value.positive {
+    color: var(--accent-green);
+}
+
+.stat-value.negative {
+    color: var(--accent-red);
+}
+
+.stat-change {
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.stat-change.positive {
+    color: var(--accent-green);
+}
+
+.stat-change.negative {
+    color: var(--accent-red);
+}
+
+.stat-sublabel {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}

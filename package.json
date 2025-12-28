@@ -1,0 +1,16 @@
+{
+  "name": "polymarket-bot",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "dashboard"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=backend & npm run dev --workspace=dashboard",
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:dashboard": "npm run dev --workspace=dashboard",
+    "build": "npm run build --workspace=backend && npm run build --workspace=dashboard",
+    "start:prod": "NODE_ENV=production node backend/dist/index.js"
+  }
+}

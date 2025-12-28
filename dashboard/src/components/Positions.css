@@ -1,0 +1,99 @@
+.positions {
+    width: 100%;
+}
+
+.positions-header {
+    display: grid;
+    grid-template-columns: 2fr 80px 100px 100px 100px 120px;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    margin-bottom: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.positions-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    max-height: 350px;
+    overflow-y: auto;
+}
+
+.position-row {
+    display: grid;
+    grid-template-columns: 2fr 80px 100px 100px 100px 120px;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--glass-bg);
+    border-radius: 8px;
+    border: 1px solid transparent;
+    transition: all 0.2s;
+    align-items: center;
+}
+
+.position-row:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--glass-border);
+}
+
+.col-market .market-id {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+}
+
+.col-side,
+.col-shares,
+.col-entry,
+.col-cost,
+.col-pnl {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.side-badge {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    margin-right: 0.25rem;
+}
+
+.side-badge.yes {
+    background: rgba(0, 217, 126, 0.15);
+    color: var(--accent-green);
+}
+
+.side-badge.no {
+    background: rgba(230, 55, 87, 0.15);
+    color: var(--accent-red);
+}
+
+.positive {
+    color: var(--accent-green) !important;
+}
+
+.negative {
+    color: var(--accent-red) !important;
+}
+
+.positions-footer {
+    display: flex;
+    justify-content: space-between;
+    padding: 1rem;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}

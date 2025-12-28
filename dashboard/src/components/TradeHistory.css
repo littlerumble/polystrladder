@@ -1,0 +1,110 @@
+.trade-history {
+    width: 100%;
+}
+
+.trades-header {
+    display: grid;
+    grid-template-columns: 120px 2fr 70px 80px 120px 150px;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    margin-bottom: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.trades-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.trade-row {
+    display: grid;
+    grid-template-columns: 120px 2fr 70px 80px 120px 150px;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--glass-bg);
+    border-radius: 8px;
+    border: 1px solid transparent;
+    transition: all 0.2s;
+    align-items: center;
+}
+
+.trade-row:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--glass-border);
+}
+
+.col-time {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.col-market .market-question {
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+}
+
+.col-side,
+.col-price,
+.col-size,
+.col-strategy {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.col-size {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+}
+
+.shares-detail {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+.side-badge {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+.side-badge.yes {
+    background: rgba(0, 217, 126, 0.15);
+    color: var(--accent-green);
+}
+
+.side-badge.no {
+    background: rgba(230, 55, 87, 0.15);
+    color: var(--accent-red);
+}
+
+.strategy-badge {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    border: 1px solid;
+}
+
+.strategy-detail {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 0.15rem;
+}

@@ -1,0 +1,103 @@
+.header {
+    background: linear-gradient(180deg, var(--bg-secondary), transparent);
+    border-bottom: 1px solid var(--border-color);
+    padding: 1rem 1.5rem;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(20px);
+}
+
+.header-content {
+    max-width: 1400px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.logo-section {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.logo-icon {
+    font-size: 1.5rem;
+}
+
+.logo-text {
+    font-size: 1.25rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.mode-badge {
+    padding: 0.35rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.mode-badge.paper {
+    background: linear-gradient(135deg, rgba(253, 126, 20, 0.2), rgba(253, 126, 20, 0.1));
+    color: var(--accent-orange);
+    border: 1px solid rgba(253, 126, 20, 0.3);
+}
+
+.mode-badge.live {
+    background: linear-gradient(135deg, rgba(0, 217, 126, 0.2), rgba(0, 217, 126, 0.1));
+    color: var(--accent-green);
+    border: 1px solid rgba(0, 217, 126, 0.3);
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.status-section {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+}
+
+.connection-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    transition: background 0.3s;
+}
+
+.connection-status.connected .status-dot {
+    background: var(--accent-green);
+    box-shadow: 0 0 10px var(--accent-green);
+}
+
+.connection-status.disconnected .status-dot {
+    background: var(--accent-red);
+}
+
+.status-text {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.timestamp {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}

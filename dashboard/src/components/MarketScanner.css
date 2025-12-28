@@ -1,0 +1,113 @@
+.market-scanner {
+    width: 100%;
+}
+
+.scanner-header {
+    display: grid;
+    grid-template-columns: 2fr 100px 100px 100px 120px;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    margin-bottom: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.scanner-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.scanner-row {
+    display: grid;
+    grid-template-columns: 2fr 100px 100px 100px 120px;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--glass-bg);
+    border-radius: 8px;
+    border: 1px solid transparent;
+    transition: all 0.2s;
+    align-items: center;
+}
+
+.scanner-row:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--glass-border);
+}
+
+.col-market {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.market-question {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.market-category {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.col-regime,
+.col-time,
+.col-volume,
+.col-status {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.regime-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border: 1px solid;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    margin-right: 0.25rem;
+}
+
+.status-badge.active {
+    background: rgba(0, 217, 126, 0.15);
+    color: var(--accent-green);
+}
+
+.status-badge.tail {
+    background: rgba(111, 66, 193, 0.15);
+    color: var(--accent-purple);
+}
+
+.status-badge.watching {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-muted);
+}
+
+.empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem;
+    color: var(--text-muted);
+    font-style: italic;
+}

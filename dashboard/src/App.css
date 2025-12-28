@@ -1,0 +1,131 @@
+.app {
+    min-height: 100vh;
+    background: var(--bg-primary);
+}
+
+/* Loading & Error Screens */
+.loading-screen,
+.error-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    gap: 1rem;
+}
+
+.loading-spinner {
+    width: 48px;
+    height: 48px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--accent-cyan);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.error-screen button {
+    padding: 0.75rem 1.5rem;
+    background: var(--accent-blue);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: transform 0.2s, background 0.2s;
+}
+
+.error-screen button:hover {
+    background: #3d8eef;
+    transform: scale(1.05);
+}
+
+/* Main Content */
+.main-content {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+/* Portfolio Section */
+.portfolio-section {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+/* Chart Section */
+.chart-section {
+    background: var(--bg-card);
+    border-radius: 16px;
+    border: 1px solid var(--glass-border);
+    padding: 1.5rem;
+    backdrop-filter: blur(10px);
+}
+
+/* Tab Navigation */
+.tab-nav {
+    display: flex;
+    gap: 0.5rem;
+    background: var(--bg-secondary);
+    padding: 0.5rem;
+    border-radius: 12px;
+    overflow-x: auto;
+}
+
+.tab-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+    background: transparent;
+    color: var(--text-secondary);
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.tab-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.tab-btn.active {
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+    color: white;
+}
+
+.tab-btn .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+/* Tab Content */
+.tab-content {
+    background: var(--bg-card);
+    border-radius: 16px;
+    border: 1px solid var(--glass-border);
+    padding: 1.5rem;
+    backdrop-filter: blur(10px);
+    min-height: 400px;
+}

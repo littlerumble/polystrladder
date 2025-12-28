@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./bot.db"
+}
+
+// Market metadata from Polymarket
+model Market {
+  id              String   @id
+  question        String
+  description     String?
+  category        String
+  subcategory     String?
+  endDate         DateTime
+  volume24h       Float    @default(0)
+  liquidity       Float    @default(0)
+  outcomes        String   // JSON array of outcomes
+  clobTokenIds    String   // JSON array of token IDs
+  active          Boolean  @default(true)
+  closed          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  trades          Trade[]
+  positions       Position[]
+  strategyEvents  StrategyEvent[]
+  priceHistory    PriceHistory[]
+  marketStates    MarketState[]
+}
+
+// Individual trades executed by the bot
+model Trade {
+  id              Int      @id @default(autoincrement())
+  marketId        String
+  market          Market   @relation(fields: [marketId], references: [id])
+  side            String   // YES or NO
+  price           Float
+  size            Float    // USDC amount
+  shares          Float    // Number of shares
+  strategy        String   // LADDER_COMPRESSION, VOLATILITY_ABSORPTION, TAIL_INSURANCE
+  strategyDetail  String?  // e.g., ladder level
+  status          String   @default("FILLED") // FILLED, PENDING, REJECTED
+  timestamp       DateTime @default(now())
+}
+
+// Current positions held by the bot
+model Position {
+  id              Int      @id @default(autoincrement())
+  marketId        String   @unique
+  market          Market   @relation(fields: [marketId], references: [id])
+  sharesYes       Float    @default(0)
+  sharesNo        Float    @default(0)
+  avgEntryYes     Float?
+  avgEntryNo      Float?
+  costBasisYes    Float    @default(0)
+  costBasisNo     Float    @default(0)
+  unrealizedPnl   Float    @default(0)
+  realizedPnl     Float    @default(0)
+  updatedAt       DateTime @updatedAt
+}
+
+// Periodic P&L snapshots for charting
+model PnlSnapshot {
+  id              Int      @id @default(autoincrement())
+  totalValue      Float    // Total portfolio value
+  cashBalance     Float    // Remaining cash
+  positionsValue  Float    // Value of all positions
+  unrealizedPnl   Float
+  realizedPnl     Float
+  timestamp       DateTime @default(now())
+}
+
+// Strategy decision events for debugging/analysis
+model StrategyEvent {
+  id              Int      @id @default(autoincrement())
+  marketId        String
+  market          Market   @relation(fields: [marketId], references: [id])
+  regime          String   // EARLY_UNCERTAIN, MID_CONSENSUS, LATE_COMPRESSED, HIGH_VOLATILITY
+  strategy        String   // Strategy type selected
+  action          String   // ENTER, SKIP, LADDER_FILL, TAIL_TRIGGER, etc.
+  priceYes        Float
+  priceNo         Float
+  details         String?  // JSON with additional context
+  timestamp       DateTime @default(now())
+}
+
+// Price history for volatility calculation
+model PriceHistory {
+  id              Int      @id @default(autoincrement())
+  marketId        String
+  market          Market   @relation(fields: [marketId], references: [id])
+  priceYes        Float
+  priceNo         Float
+  bestBidYes      Float?
+  bestAskYes      Float?
+  bestBidNo       Float?
+  bestAskNo       Float?
+  timestamp       DateTime @default(now())
+
+  @@index([marketId, timestamp])
+}
+
+// Per-market state tracking (ladder levels filled, etc.)
+model MarketState {
+  id              Int      @id @default(autoincrement())
+  marketId        String   @unique
+  market          Market   @relation(fields: [marketId], references: [id])
+  regime          String   @default("MID_CONSENSUS")
+  ladderFilled    String   @default("[]") // JSON array of filled ladder levels
+  tailActive      Boolean  @default(false)
+  lastProcessed   DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

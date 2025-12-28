@@ -1,0 +1,47 @@
+.pnl-chart {
+    width: 100%;
+}
+
+.chart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+
+.chart-header h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.chart-trend {
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+}
+
+.chart-trend.positive {
+    background: rgba(0, 217, 126, 0.15);
+    color: var(--accent-green);
+}
+
+.chart-trend.negative {
+    background: rgba(230, 55, 87, 0.15);
+    color: var(--accent-red);
+}
+
+.chart-container {
+    width: 100%;
+    height: 200px;
+}
+
+.chart-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    color: var(--text-muted);
+    font-style: italic;
+}
