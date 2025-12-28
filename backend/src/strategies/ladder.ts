@@ -156,4 +156,117 @@ export function markLadderFilled(state: MarketState, level: number): MarketState
     return state;
 }
 
+/**
+ * DCA (Dollar Cost Average) Strategy - Buy Dips Pre-Game Only
+ * 
+ * Philosophy:
+ * - If we have a position and price dips 5%+ before game starts, buy more at lower price
+ * - This lowers average entry price
+ * - Only works BEFORE game starts (pre-game uncertainty, not live game volatility)
+ * - Max 2 DCA buys per market to prevent over-concentration
+ * 
+ * Triggers:
+ * - Price dropped 5%+ from average entry
+ * - Game hasn't started yet
+ * - Less than 2 DCA buys already made
+ * - Still in MID_CONSENSUS regime (not EARLY_UNCERTAIN)
+ */
+export function generateDCAOrders(
+    state: MarketState,
+    position: { sharesYes: number; avgEntryYes: number; dcaBuys?: number },
+    tokenIdYes: string,
+    gameStartTime: Date | null | undefined,
+    maxDCABuys: number = 2
+): ProposedOrder[] {
+    const config = configService.getAll();
+    const orders: ProposedOrder[] = [];
+
+    // Only DCA if we have an existing YES position
+    if (!position || position.sharesYes <= 0 || !position.avgEntryYes || position.avgEntryYes <= 0) {
+        return orders;
+    }
+
+    // Never DCA after game starts
+    const now = new Date();
+    if (gameStartTime && now >= gameStartTime) {
+        logger.debug('DCA blocked - game already started', { marketId: state.marketId });
+        return orders;
+    }
+
+    // Check DCA limit
+    const dcaBuyCount = position.dcaBuys || 0;
+    if (dcaBuyCount >= maxDCABuys) {
+        logger.debug('DCA limit reached', { marketId: state.marketId, dcaBuys: dcaBuyCount });
+        return orders;
+    }
+
+    // Don't DCA in EARLY_UNCERTAIN (thesis might be breaking)
+    if (state.regime === 'EARLY_UNCERTAIN') {
+        logger.debug('DCA blocked - EARLY_UNCERTAIN regime', { marketId: state.marketId });
+        return orders;
+    }
+
+    const currentPrice = state.lastPriceYes;
+
+    // CRITICAL: Only DCA if price is ABOVE first ladder level (60%)
+    // If price drops below first ladder, thesis is breaking - exit instead of DCA
+    const ladderConfig = configService.getAll();
+    const firstLadderLevel = ladderConfig.ladderLevels[0] || 0.60;
+    if (currentPrice < firstLadderLevel) {
+        logger.debug('DCA blocked - price below first ladder (thesis breaking)', {
+            marketId: state.marketId,
+            currentPrice,
+            firstLadderLevel
+        });
+        return orders; // Don't DCA - consensus break logic will handle exit
+    }
+
+    const avgEntry = position.avgEntryYes;
+    const dipPct = (avgEntry - currentPrice) / avgEntry;
+
+    // Only DCA if price dipped 5%+ from average entry
+    const DIP_THRESHOLD = 0.05; // 5% dip
+    if (dipPct < DIP_THRESHOLD) {
+        return orders;
+    }
+
+    // DCA size: 15% of max exposure (smaller than initial ladder buys)
+    const DCA_WEIGHT = 0.15;
+    const maxExposure = config.bankroll * config.maxMarketExposurePct;
+    const sizeUsdc = maxExposure * DCA_WEIGHT;
+    const shares = sizeUsdc / currentPrice;
+
+    const order: ProposedOrder = {
+        marketId: state.marketId,
+        tokenId: tokenIdYes,
+        side: Side.YES,
+        price: currentPrice,
+        sizeUsdc,
+        shares,
+        strategy: StrategyType.LADDER_COMPRESSION, // Count as part of ladder
+        strategyDetail: `dca_buy_${(dipPct * 100).toFixed(1)}pct_dip`,
+        confidence: 0.7, // Medium confidence - it's a dip buy
+        isDCA: true
+    };
+
+    orders.push(order);
+
+    logger.strategy('DCA_TRIGGER', {
+        marketId: state.marketId,
+        regime: state.regime,
+        strategy: 'DCA_BUY',
+        priceYes: currentPrice,
+        priceNo: state.lastPriceNo,
+        details: {
+            avgEntry,
+            dipPct: `${(dipPct * 100).toFixed(1)}%`,
+            sizeUsdc,
+            shares,
+            dcaBuyNumber: dcaBuyCount + 1
+        }
+    });
+
+    return orders;
+}
+
 export default generateLadderOrders;

@@ -124,6 +124,7 @@ export interface ProposedOrder {
     strategyDetail?: string;
     confidence: number;
     isExit?: boolean;  // True for profit-taking exit orders
+    isDCA?: boolean;   // True for DCA (dollar cost average) orders
 }
 
 /**

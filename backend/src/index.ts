@@ -21,7 +21,7 @@ import { ClobFeed } from './ws/clobFeed.js';
 import { DashboardServer } from './ws/dashboardServer.js';
 import { selectStrategy, shouldConsiderTailInsurance } from './strategies/strategySelector.js';
 import exitStrategy from './strategies/exitStrategy.js';
-import { generateLadderOrders, markLadderFilled } from './strategies/ladder.js';
+import { generateLadderOrders, markLadderFilled, generateDCAOrders } from './strategies/ladder.js';
 import { generateVolatilityOrders } from './strategies/volatility.js';
 import { generateTailInsuranceOrder, markTailActive } from './strategies/tail.js';
 import { RiskManager } from './risk/riskManager.js';
@@ -252,6 +252,22 @@ class TradingBot {
                 if (tailOrder) {
                     proposedOrders.push(tailOrder);
                 }
+            }
+
+            // 5.5 Check for DCA opportunity (buy dips pre-game only)
+            const existingPosition = this.riskManager.getPosition(update.marketId);
+            if (existingPosition && existingPosition.sharesYes > 0 && tokenIdYes) {
+                const dcaOrders = generateDCAOrders(
+                    updatedState,
+                    {
+                        sharesYes: existingPosition.sharesYes,
+                        avgEntryYes: existingPosition.avgEntryYes || 0,
+                        dcaBuys: 0  // TODO: Track DCA count in position if needed
+                    },
+                    tokenIdYes,
+                    market?.endDate  // Use endDate as game start (for now)
+                );
+                proposedOrders.push(...dcaOrders);
             }
 
             // 6. Check for Profit Taking, Moon Bag Exit, or Thesis-Based Stop Loss
