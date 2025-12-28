@@ -250,8 +250,8 @@ class TradingBot {
                 update.priceNo
             );
 
-            if (profitCheck.shouldExit && tokenIdYes) {
-                const exitOrder = exitStrategy.generateExitOrder(updatedState, position, tokenIdYes);
+            if (profitCheck.shouldExit && tokenIdYes && tokenIdNo) {
+                const exitOrder = exitStrategy.generateExitOrder(updatedState, position, tokenIdYes, tokenIdNo);
                 if (exitOrder) {
                     logger.info('Taking profit', {
                         marketId: update.marketId,

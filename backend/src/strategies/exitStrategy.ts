@@ -35,29 +35,39 @@ export function shouldTakeProfit(
     currentPriceNo: number,
     config: ExitConfig = DEFAULT_EXIT_CONFIG
 ): { shouldExit: boolean; profitPct: number; reason: string } {
-    // Only consider positions with YES shares (our primary side)
-    if (position.sharesYes <= 0 || !position.avgEntryYes) {
-        return { shouldExit: false, profitPct: 0, reason: 'No YES position' };
+    // Check YES position
+    if (position.sharesYes > 0 && position.avgEntryYes) {
+        const costBasis = position.costBasisYes;
+        const currentValue = position.sharesYes * currentPriceYes;
+        const unrealizedProfit = currentValue - costBasis;
+        const profitPct = costBasis > 0 ? unrealizedProfit / costBasis : 0;
+
+        if (profitPct >= config.takeProfitPct) {
+            return {
+                shouldExit: true,
+                profitPct,
+                reason: `YES Profit target reached: ${(profitPct * 100).toFixed(1)}% >= ${(config.takeProfitPct * 100).toFixed(1)}%`
+            };
+        }
     }
 
-    const costBasis = position.costBasisYes;
-    const currentValue = position.sharesYes * currentPriceYes;
-    const unrealizedProfit = currentValue - costBasis;
-    const profitPct = costBasis > 0 ? unrealizedProfit / costBasis : 0;
+    // Check NO position
+    if (position.sharesNo > 0 && position.avgEntryNo) {
+        const costBasis = position.costBasisNo;
+        const currentValue = position.sharesNo * currentPriceNo;
+        const unrealizedProfit = currentValue - costBasis;
+        const profitPct = costBasis > 0 ? unrealizedProfit / costBasis : 0;
 
-    if (profitPct >= config.takeProfitPct) {
-        return {
-            shouldExit: true,
-            profitPct,
-            reason: `Profit target reached: ${(profitPct * 100).toFixed(1)}% >= ${(config.takeProfitPct * 100).toFixed(1)}%`
-        };
+        if (profitPct >= config.takeProfitPct) {
+            return {
+                shouldExit: true,
+                profitPct,
+                reason: `NO Profit target reached: ${(profitPct * 100).toFixed(1)}% >= ${(config.takeProfitPct * 100).toFixed(1)}%`
+            };
+        }
     }
 
-    return {
-        shouldExit: false,
-        profitPct,
-        reason: `Profit ${(profitPct * 100).toFixed(1)}% below target ${(config.takeProfitPct * 100).toFixed(1)}%`
-    };
+    return { shouldExit: false, profitPct: 0, reason: 'No profit target reached' };
 }
 
 /**
@@ -66,22 +76,40 @@ export function shouldTakeProfit(
 export function generateExitOrder(
     state: MarketState,
     position: Position,
-    tokenIdYes: string
+    tokenIdYes: string,
+    tokenIdNo: string
 ): ProposedOrder | null {
-    if (position.sharesYes <= 0) {
+    let side: Side;
+    let tokenId: string;
+    let price: number;
+    let shares: number;
+
+    // Determine which side to sell based on position
+    // Prioritize the one with profit if both exist (simplified for now to just pick the largest position or check profit again)
+    // For now, we'll check which one triggered the signal effectively by checking shares
+    if (position.sharesYes > 0) {
+        side = Side.YES;
+        tokenId = tokenIdYes;
+        price = state.lastPriceYes;
+        shares = position.sharesYes;
+    } else if (position.sharesNo > 0) {
+        side = Side.NO;
+        tokenId = tokenIdNo;
+        price = state.lastPriceNo;
+        shares = position.sharesNo;
+    } else {
         return null;
     }
 
-    const sharesToSell = position.sharesYes;
-    const sizeUsdc = sharesToSell * state.lastPriceYes;
+    const sizeUsdc = shares * price;
 
     const order: ProposedOrder = {
         marketId: state.marketId,
-        tokenId: tokenIdYes,
-        side: Side.YES,
-        price: state.lastPriceYes,
+        tokenId: tokenId,
+        side: side,
+        price: price,
         sizeUsdc,
-        shares: sharesToSell,
+        shares: shares,
         strategy: StrategyType.PROFIT_TAKING,
         strategyDetail: 'take_profit_exit',
         confidence: 1.0,
@@ -95,10 +123,10 @@ export function generateExitOrder(
         priceYes: state.lastPriceYes,
         priceNo: state.lastPriceNo,
         details: {
-            sharesToSell,
+            side,
+            sharesToSell: shares,
             sizeUsdc,
-            avgEntry: position.avgEntryYes,
-            currentPrice: state.lastPriceYes
+            currentPrice: price
         }
     });
 
