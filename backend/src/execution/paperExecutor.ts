@@ -71,7 +71,7 @@ export class PaperExecutor implements Executor {
             });
 
             // Update position
-            await this.updatePosition(order.marketId, order.side, filledShares, filledUsdc, filledPrice);
+            await this.updatePosition(order.marketId, order.side, filledShares, filledUsdc, filledPrice, order.isExit);
 
             const result = createExecutionResult(
                 order,
@@ -127,52 +127,102 @@ export class PaperExecutor implements Executor {
         side: string,
         shares: number,
         usdc: number,
-        price: number
+        price: number,
+        isExit?: boolean
     ): Promise<void> {
         const existing = await this.prisma.position.findUnique({
             where: { marketId }
         });
 
         if (existing) {
-            if (side === 'YES') {
-                const newSharesYes = existing.sharesYes + shares;
-                const newCostBasisYes = existing.costBasisYes + usdc;
-                const newAvgEntryYes = newCostBasisYes / newSharesYes;
+            if (isExit) {
+                // Handle SELL / EXIT
+                if (side === 'YES') {
+                    // Prevent negative shares
+                    const sharesToRemove = Math.min(shares, existing.sharesYes);
+                    const pctSold = sharesToRemove / existing.sharesYes || 1;
+                    const costBasisRemoved = existing.costBasisYes * pctSold;
 
-                await this.prisma.position.update({
-                    where: { marketId },
-                    data: {
-                        sharesYes: newSharesYes,
-                        costBasisYes: newCostBasisYes,
-                        avgEntryYes: newAvgEntryYes
-                    }
-                });
+                    const newSharesYes = existing.sharesYes - sharesToRemove;
+                    const newCostBasisYes = existing.costBasisYes - costBasisRemoved;
+                    const realizedProfit = usdc - costBasisRemoved;
+
+                    await this.prisma.position.update({
+                        where: { marketId },
+                        data: {
+                            sharesYes: newSharesYes,
+                            costBasisYes: newCostBasisYes,
+                            realizedPnl: { increment: realizedProfit }
+                        }
+                    });
+                } else {
+                    const sharesToRemove = Math.min(shares, existing.sharesNo);
+                    const pctSold = sharesToRemove / existing.sharesNo || 1;
+                    const costBasisRemoved = existing.costBasisNo * pctSold;
+
+                    const newSharesNo = existing.sharesNo - sharesToRemove;
+                    const newCostBasisNo = existing.costBasisNo - costBasisRemoved;
+                    const realizedProfit = usdc - costBasisRemoved;
+
+                    await this.prisma.position.update({
+                        where: { marketId },
+                        data: {
+                            sharesNo: newSharesNo,
+                            costBasisNo: newCostBasisNo,
+                            realizedPnl: { increment: realizedProfit }
+                        }
+                    });
+                }
             } else {
-                const newSharesNo = existing.sharesNo + shares;
-                const newCostBasisNo = existing.costBasisNo + usdc;
-                const newAvgEntryNo = newCostBasisNo / newSharesNo;
+                // Handle BUY (existing logic)
+                if (side === 'YES') {
+                    const newSharesYes = existing.sharesYes + shares;
+                    const newCostBasisYes = existing.costBasisYes + usdc;
+                    const newAvgEntryYes = newCostBasisYes / newSharesYes;
 
-                await this.prisma.position.update({
-                    where: { marketId },
-                    data: {
-                        sharesNo: newSharesNo,
-                        costBasisNo: newCostBasisNo,
-                        avgEntryNo: newAvgEntryNo
-                    }
-                });
+                    await this.prisma.position.update({
+                        where: { marketId },
+                        data: {
+                            sharesYes: newSharesYes,
+                            costBasisYes: newCostBasisYes,
+                            avgEntryYes: newAvgEntryYes
+                        }
+                    });
+                } else {
+                    const newSharesNo = existing.sharesNo + shares;
+                    const newCostBasisNo = existing.costBasisNo + usdc;
+                    const newAvgEntryNo = newCostBasisNo / newSharesNo;
+
+                    await this.prisma.position.update({
+                        where: { marketId },
+                        data: {
+                            sharesNo: newSharesNo,
+                            costBasisNo: newCostBasisNo,
+                            avgEntryNo: newAvgEntryNo
+                        }
+                    });
+                }
             }
         } else {
-            await this.prisma.position.create({
-                data: {
-                    marketId,
-                    sharesYes: side === 'YES' ? shares : 0,
-                    sharesNo: side === 'NO' ? shares : 0,
-                    avgEntryYes: side === 'YES' ? price : null,
-                    avgEntryNo: side === 'NO' ? price : null,
-                    costBasisYes: side === 'YES' ? usdc : 0,
-                    costBasisNo: side === 'NO' ? usdc : 0
+            try {
+                await this.prisma.position.create({
+                    data: {
+                        marketId,
+                        sharesYes: side === 'YES' ? shares : 0,
+                        sharesNo: side === 'NO' ? shares : 0,
+                        avgEntryYes: side === 'YES' ? price : null,
+                        avgEntryNo: side === 'NO' ? price : null,
+                        costBasisYes: side === 'YES' ? usdc : 0,
+                        costBasisNo: side === 'NO' ? usdc : 0
+                    }
+                });
+            } catch (error: any) {
+                // Handle race condition where position was created between findUnique and create
+                if (error.code === 'P2002') {
+                    return this.updatePosition(marketId, side, shares, usdc, price, isExit);
                 }
-            });
+                throw error;
+            }
         }
 
         // Emit position update
