@@ -32,17 +32,8 @@ function parseReason(strategy: string, details: string): { reason: string; icon:
 
             case 'PROFIT_TAKING': {
                 const side = parsed.side || 'YES';
-                const isPartial = parsed.strategyDetail?.includes('75pct') || parsed.strategyDetail?.includes('partial');
-                const keepingMoonBag = parsed.keepingMoonBag;
-
-                if (keepingMoonBag || isPartial) {
-                    return {
-                        reason: `Sold 75% at profit - Moon bag created (25% held)`,
-                        icon: '🌙'
-                    };
-                }
                 return {
-                    reason: `Full exit - Position closed (${side})`,
+                    reason: `Full exit - Position closed (${side}) 💰`,
                     icon: '💰'
                 };
             }

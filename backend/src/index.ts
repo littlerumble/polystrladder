@@ -312,19 +312,7 @@ class TradingBot {
                 proposedOrders = generateVolatilityOrders(updatedState, tokenIdYes, tokenIdNo);
             }
 
-            // DEBUG: Log order generation for sweet-spot markets
-            if ((update.priceYes >= 0.60 && update.priceYes <= 0.92) || (update.priceNo >= 0.60 && update.priceNo <= 0.92)) {
-                logger.info('📊 ORDER GENERATION DEBUG', {
-                    marketId: update.marketId,
-                    priceYes: (update.priceYes * 100).toFixed(1) + '%',
-                    priceNo: (update.priceNo * 100).toFixed(1) + '%',
-                    regime: newRegime,
-                    strategy,
-                    ordersGenerated: proposedOrders.length,
-                    tokenIdYes: tokenIdYes ? 'exists' : 'MISSING',
-                    tokenIdNo: tokenIdNo ? 'exists' : 'MISSING'
-                });
-            }
+            // Order generation logging removed for performance
 
             // 5. Check for tail insurance opportunity
             if (shouldConsiderTailInsurance(
@@ -403,14 +391,12 @@ class TradingBot {
                 const consensusCheck = exitStrategy.checkConsensusBreak(updatedState, update.priceYes, update.priceNo, positionSide);
                 updatedState = consensusCheck.updatedState;
 
-                // Check if we should exit (profit, moon bag exit, or thesis stop)
+                // Check if we should exit (profit at 14% or price at 90%)
                 const exitCheck = exitStrategy.shouldTakeProfit(
                     position,
                     update.priceYes,
                     update.priceNo,
                     updatedState.consensusBreakConfirmed,
-                    updatedState.moonBagActive,
-                    updatedState.moonBagPriceAtActivation,
                     market?.endDate  // Use endDate instead of gameStartTime
                 );
 
@@ -420,31 +406,18 @@ class TradingBot {
                         position,
                         tokenIdYes,
                         tokenIdNo,
-                        exitCheck.exitPct  // 0.75 for partial, 1.0 for full
+                        exitCheck.exitPct  // Always 1.0 for full exit
                     );
 
                     if (exitOrder) {
-                        if (exitCheck.isMoonBagExit) {
-                            logger.info('🌙 MOON BAG EXIT - Price dropped, selling remaining', {
-                                marketId: update.marketId,
-                                reason: exitCheck.reason
-                            });
-                        } else if (exitCheck.isProfit && exitCheck.exitPct < 1.0) {
-                            logger.info('💰 TAKING 75% PROFIT - Creating moon bag', {
+                        if (exitCheck.isProfit) {
+                            logger.info('💰 TAKING FULL PROFIT - 100% EXIT', {
                                 marketId: update.marketId,
                                 profitPct: (exitCheck.profitPct * 100).toFixed(1) + '%',
                                 reason: exitCheck.reason
                             });
-                            // Activate moon bag after this order executes
-                            updatedState.moonBagActive = true;
-                            updatedState.moonBagPriceAtActivation = update.priceYes;
-                        } else if (exitCheck.isProfit) {
-                            logger.info('💰 TAKING FULL PROFIT', {
-                                marketId: update.marketId,
-                                profitPct: (exitCheck.profitPct * 100).toFixed(1) + '%'
-                            });
                         } else {
-                            logger.info('🛑 THESIS STOP - Consensus broken', {
+                            logger.info('🛑 STOP LOSS EXIT', {
                                 marketId: update.marketId,
                                 pnlPct: (exitCheck.profitPct * 100).toFixed(1) + '%',
                                 reason: exitCheck.reason
@@ -487,6 +460,17 @@ class TradingBot {
 
                 // Execute
                 const result = await this.executor.execute(order);
+
+                // DEBUG: Log execution result for exit orders
+                if (order.isExit) {
+                    logger.info('🔍 EXIT EXECUTION RESULT', {
+                        marketId: order.marketId,
+                        success: result.success,
+                        filledShares: result.filledShares,
+                        filledUsdc: result.filledUsdc,
+                        error: result.error
+                    });
+                }
 
                 if (result.success) {
                     // Update risk manager
@@ -662,8 +646,7 @@ class TradingBot {
             exposureNo: 0,
             tailActive: false,
             lastUpdated: new Date(),
-            consensusBreakConfirmed: false,
-            moonBagActive: false
+            consensusBreakConfirmed: false
         };
         this.marketStates.set(marketId, state);
 
@@ -778,7 +761,6 @@ class TradingBot {
                 tailActive: dbState.tailActive,
                 lastUpdated: dbState.lastProcessed,
                 consensusBreakConfirmed: false,
-                moonBagActive: false,
                 stopLossTriggeredAt: dbState.stopLossTriggeredAt || undefined,
                 cooldownUntil: dbState.cooldownUntil || undefined
             };

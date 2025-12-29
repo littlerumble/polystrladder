@@ -108,11 +108,12 @@ export class RiskManager {
         // 0. Check position limit for NEW markets
         const existingPosition = this.positions.get(order.marketId);
         const maxPositions = config.maxActivePositions || 6;
+
         if (!existingPosition && this.positions.size >= maxPositions) {
             return {
                 approved: false,
                 originalOrder: order,
-                rejectionReason: `Max positions reached: ${this.positions.size}/${maxPositions} - not entering new market`
+                rejectionReason: `Max positions reached: ${this.positions.size}/${maxPositions}`
             };
         }
 
@@ -374,7 +375,7 @@ export class RiskManager {
     }
 
     /**
-     * Get active position count.
+     * Get position count.
      */
     getPositionCount(): number {
         return this.positions.size;

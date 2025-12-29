@@ -116,11 +116,14 @@ export class MarketLoader {
             // Must not have already ended
             if (endDate <= now) return false;
 
-            // BONUS: Sports events typically have gameStartTime - log for debugging
-            // Don't strictly require it since some sports markets might not have it
-            if (market.gameStartTime) {
-                logger.debug(`Sports event detected: ${market.question?.substring(0, 40)}... starts at ${market.gameStartTime}`);
+            // MANDATORY: Sports events MUST have gameStartTime
+            // Without it, we can't properly time our trades
+            if (!market.gameStartTime) {
+                logger.debug(`Rejected (no gameStartTime): ${market.question?.substring(0, 40)}...`);
+                return false;
             }
+
+            logger.debug(`Sports event: ${market.question?.substring(0, 40)}... starts at ${market.gameStartTime}`);
 
             // Check category filters
             const category = market.category || market.events?.[0]?.category || '';
@@ -245,40 +248,54 @@ export class MarketLoader {
      * Calculate profit potential score for a market.
      * Higher score = better opportunity for profit.
      * 
-     * Scoring factors:
-     * 1. Price in tradeable range (60-85%): Best for ladder strategy
-     * 2. Volume 24h: Higher volume = more trading activity
-     * 3. Liquidity: Better spreads and execution
-     * 4. Time to resolution: Closer = less risk of reversal
+     * Scoring factors (prioritized by importance):
+     * 1. Volume 24h: PRIMARY - higher volume = more trading activity
+     * 2. Liquidity: PRIMARY - better spreads and execution
+     * 3. Game Start Time: SECONDARY - games starting soon preferred
+     * 4. Turnover ratio: MINOR - volume/liquidity health check
      */
     private calculateProfitScore(market: MarketData): number {
         let score = 0;
+        const now = new Date();
 
-        // We don't have live prices here, so use volume and liquidity as proxies
-        // The actual price filtering happens when strategies run
-
-        // Factor 1: Volume 24h (normalized, max 40 points)
+        // Factor 1: Volume 24h - PRIMARY (max 45 points)
         // Higher volume = more trading activity = more opportunities
-        const volumeScore = Math.min(market.volume24h / 100000, 1) * 40;
+        const volumeScore = Math.min(market.volume24h / 100000, 1) * 45;
         score += volumeScore;
 
-        // Factor 2: Liquidity (normalized, max 30 points)
+        // Factor 2: Liquidity - PRIMARY (max 30 points)
         // Higher liquidity = better price discovery and tighter spreads
         const liquidityScore = Math.min(market.liquidity / 50000, 1) * 30;
         score += liquidityScore;
 
-        // Factor 3: Time to resolution (max 20 points)
-        // Closer to resolution = less time for thesis to break
-        const now = new Date();
-        const hoursToEnd = (market.endDate.getTime() - now.getTime()) / (1000 * 60 * 60);
-        if (hoursToEnd <= 6) {
-            score += 20;  // Best: resolves very soon
-        } else if (hoursToEnd <= 24) {
-            score += 15;  // Good: resolves today
-        } else if (hoursToEnd <= 48) {
-            score += 10;  // OK: resolves in 2 days
-        } else {
-            score += 5;   // Acceptable: resolves within 72h
+        // Factor 3: GAME START TIME - SECONDARY (max 15 points)
+        // Games starting soon are preferred for timing trades
+        // Note: Markets without gameStartTime are already filtered out
+        if (market.gameStartTime) {
+            const hoursToGameStart = (market.gameStartTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+            if (hoursToGameStart <= 0) {
+                // Game already started - still good but less predictable
+                score += 10;
+            } else if (hoursToGameStart <= 2) {
+                // Game starts within 2 hours - best timing
+                score += 15;
+            } else if (hoursToGameStart <= 6) {
+                // Game starts within 6 hours - great timing
+                score += 14;
+            } else if (hoursToGameStart <= 12) {
+                // Game starts within 12 hours - good timing
+                score += 12;
+            } else if (hoursToGameStart <= 24) {
+                // Game starts within 24 hours - acceptable
+                score += 8;
+            } else if (hoursToGameStart <= 48) {
+                // Game starts within 48 hours - lower priority
+                score += 5;
+            } else {
+                // Game starts later
+                score += 2;
+            }
         }
 
         // Factor 4: Volume/Liquidity ratio (max 10 points)
