@@ -60,7 +60,10 @@ async function checkMarketStatus() {
             // Try CLOB API market endpoint
             try {
                 const tokenIds = JSON.parse(pos.market.clobTokenIds);
-                const clobResponse = await axios.get(`https://clob.polymarket.com/markets/${tokenIds[0]}`);
+                const outcomes: string[] = JSON.parse(pos.market.outcomes || '["Yes", "No"]');
+                const yesIndex = outcomes.findIndex(o => o.toLowerCase() === 'yes');
+                const yesTokenId = yesIndex !== -1 ? tokenIds[yesIndex] : tokenIds[0];
+                const clobResponse = await axios.get(`https://clob.polymarket.com/markets/${yesTokenId}`);
                 console.log(`CLOB market response: ${JSON.stringify(clobResponse.data)}`);
             } catch (e: any) {
                 console.log(`CLOB API also failed: ${e.message}`);

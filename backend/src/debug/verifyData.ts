@@ -56,8 +56,19 @@ async function fetchLivePrice(marketId: string): Promise<{ yes: number; no: numb
 
         if (marketData.outcomePrices) {
             const prices = JSON.parse(marketData.outcomePrices);
-            const priceYes = parseFloat(prices[0]);
-            const priceNo = parseFloat(prices[1]);
+            const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+            const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
+            const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
+
+            let priceYes: number;
+            let priceNo: number;
+            if (yesIndex !== -1 && noIndex !== -1) {
+                priceYes = parseFloat(prices[yesIndex]);
+                priceNo = parseFloat(prices[noIndex]);
+            } else {
+                priceYes = parseFloat(prices[0]);
+                priceNo = parseFloat(prices[1]);
+            }
 
             if (!isNaN(priceYes) && !isNaN(priceNo)) {
                 return { yes: priceYes, no: priceNo };

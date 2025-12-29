@@ -136,9 +136,12 @@ export class DashboardServer {
         // FALLBACK: Try CLOB orderbook (but filter out garbage spreads)
         try {
             const tokenIds = JSON.parse(market.clobTokenIds);
+            const outcomes: string[] = JSON.parse(market.outcomes || '["Yes", "No"]');
             if (!tokenIds || tokenIds.length === 0) return null;
 
-            const yesTokenId = tokenIds[0];
+            // Use outcomes field to find YES token
+            const yesIndex = outcomes.findIndex(o => o.toLowerCase() === 'yes');
+            const yesTokenId = yesIndex !== -1 ? tokenIds[yesIndex] : tokenIds[0];
             const response = await axios.get(`https://clob.polymarket.com/book?token_id=${yesTokenId}`, {
                 timeout: 5000
             });

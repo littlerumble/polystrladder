@@ -28,6 +28,7 @@ async function testClobApi() {
 
         try {
             const tokenIds = JSON.parse(pos.market.clobTokenIds);
+            const outcomes: string[] = JSON.parse(pos.market.outcomes || '["Yes", "No"]');
             console.log(`Parsed token IDs: ${JSON.stringify(tokenIds)}`);
 
             if (!tokenIds || tokenIds.length === 0) {
@@ -35,7 +36,9 @@ async function testClobApi() {
                 continue;
             }
 
-            const yesTokenId = tokenIds[0];
+            // Use outcomes field to find YES token
+            const yesIndex = outcomes.findIndex(o => o.toLowerCase() === 'yes');
+            const yesTokenId = yesIndex !== -1 ? tokenIds[yesIndex] : tokenIds[0];
             console.log(`Using YES token ID: ${yesTokenId}`);
 
             // Fetch orderbook

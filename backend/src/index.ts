@@ -863,20 +863,31 @@ class TradingBot {
                 if (!marketData.outcomePrices) continue;
 
                 const prices = JSON.parse(marketData.outcomePrices);
-                const priceYes = parseFloat(prices[0]);
-                const priceNo = parseFloat(prices[1]);
+                const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+                const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
+                const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
+
+                let priceYes: number;
+                let priceNo: number;
+                if (yesIndex !== -1 && noIndex !== -1) {
+                    priceYes = parseFloat(prices[yesIndex]);
+                    priceNo = parseFloat(prices[noIndex]);
+                } else {
+                    priceYes = parseFloat(prices[0]);
+                    priceNo = parseFloat(prices[1]);
+                }
 
                 if (isNaN(priceYes) || isNaN(priceNo)) continue;
 
                 // Update the in-memory market state with accurate Gamma prices
                 const state = this.marketStates.get(marketId);
                 if (state) {
-                    const tokenIds = this.marketTokens.get(marketId) || [];
+                    const tokens = this.marketTokens.get(marketId);
 
                     // Create a synthetic price update with Gamma data
                     const update: PriceUpdate = {
                         marketId,
-                        tokenId: tokenIds[0] || marketId,
+                        tokenId: tokens?.yes || marketId,
                         priceYes,
                         priceNo,
                         timestamp: new Date()
@@ -1066,8 +1077,19 @@ class TradingBot {
 
                 if (marketData.outcomePrices) {
                     const prices = JSON.parse(marketData.outcomePrices);
-                    const priceYes = parseFloat(prices[0]);
-                    const priceNo = parseFloat(prices[1]);
+                    const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+                    const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
+                    const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
+
+                    let priceYes: number;
+                    let priceNo: number;
+                    if (yesIndex !== -1 && noIndex !== -1) {
+                        priceYes = parseFloat(prices[yesIndex]);
+                        priceNo = parseFloat(prices[noIndex]);
+                    } else {
+                        priceYes = parseFloat(prices[0]);
+                        priceNo = parseFloat(prices[1]);
+                    }
 
                     if (!isNaN(priceYes) && !isNaN(priceNo) && priceYes > 0 && priceYes < 1) {
                         currentPrices.set(position.marketId, { yes: priceYes, no: priceNo });
