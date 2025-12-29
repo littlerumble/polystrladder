@@ -224,3 +224,33 @@
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.75rem;
 }
+
+/* Polymarket Link Button */
+.polymarket-link {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    justify-content: center;
+}
+
+.polymarket-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.8rem;
+    background: linear-gradient(135deg, rgba(100, 100, 255, 0.15), rgba(100, 100, 255, 0.05));
+    border: 1px solid rgba(100, 100, 255, 0.3);
+    border-radius: 8px;
+    color: var(--accent-cyan);
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.polymarket-button:hover {
+    background: linear-gradient(135deg, rgba(100, 100, 255, 0.25), rgba(100, 100, 255, 0.1));
+    border-color: rgba(100, 100, 255, 0.5);
+    color: #fff;
+    transform: translateY(-1px);
+}

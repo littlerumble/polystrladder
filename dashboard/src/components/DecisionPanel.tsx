@@ -277,6 +277,17 @@ export default function DecisionPanel({ positions, marketStates }: DecisionPanel
                                         <span className="detail-value">{status.nextAction}</span>
                                     </div>
                                 )}
+
+                                <div className="detail-row polymarket-link">
+                                    <a
+                                        href={`https://polymarket.com/event/${position.marketId}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="polymarket-button"
+                                    >
+                                        🔗 Open in Polymarket
+                                    </a>
+                                </div>
                             </div>
                         </div>
                     );
