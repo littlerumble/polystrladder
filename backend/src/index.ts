@@ -303,8 +303,8 @@ class TradingBot {
                         avgEntryNo: existingPosition.avgEntryNo || 0,
                         dcaBuys: 0  // TODO: Track DCA count in position if needed
                     },
-                    tokenIdYes,
-                    tokenIdNo,
+                    tokenIdYes || '',
+                    tokenIdNo || '',
                     market?.endDate  // Use endDate as game start
                 );
                 proposedOrders.push(...dcaOrders);
