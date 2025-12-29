@@ -218,6 +218,55 @@ class TradingBot {
         const state = this.marketStates.get(update.marketId);
         if (!state) return;
 
+        // CRITICAL: NEVER process 0.5/0.5 prices - these are defaults/garbage
+        // Instead of skipping, actively poll Gamma API for real prices
+        const isGarbagePrice = (update.priceYes === 0.5 && update.priceNo === 0.5) ||
+            (Math.abs(update.priceYes - 0.5) < 0.01 && Math.abs(update.priceNo - 0.5) < 0.01);
+
+        if (isGarbagePrice) {
+            logger.debug('Garbage 0.5 prices - polling Gamma API for real prices', { marketId: update.marketId });
+
+            try {
+                const response = await axios.get(
+                    `https://gamma-api.polymarket.com/markets/${update.marketId}`,
+                    { timeout: 5000 }
+                );
+                const marketData = response.data;
+
+                if (marketData.outcomePrices) {
+                    const prices = JSON.parse(marketData.outcomePrices);
+                    const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+                    const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
+                    const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
+
+                    if (yesIndex !== -1 && noIndex !== -1) {
+                        update.priceYes = parseFloat(prices[yesIndex]);
+                        update.priceNo = parseFloat(prices[noIndex]);
+                    } else {
+                        update.priceYes = parseFloat(prices[0]);
+                        update.priceNo = parseFloat(prices[1]);
+                    }
+
+                    // Validate we got real prices - if still garbage, skip THIS update only
+                    if (isNaN(update.priceYes) || isNaN(update.priceNo) ||
+                        (update.priceYes === 0.5 && update.priceNo === 0.5)) {
+                        logger.warn('Gamma API also returned garbage - waiting for next update', { marketId: update.marketId });
+                        return;
+                    }
+
+                    logger.info('Fetched real Gamma prices', {
+                        marketId: update.marketId,
+                        priceYes: (update.priceYes * 100).toFixed(1) + '¢',
+                        priceNo: (update.priceNo * 100).toFixed(1) + '¢'
+                    });
+                } else {
+                    return; // No prices from Gamma, wait for next update
+                }
+            } catch (error) {
+                return; // Gamma failed, wait for next update
+            }
+        }
+
         // CRITICAL: Prevent concurrent processing of the same market
         // This fixes race condition where multiple price updates trigger duplicate trades
         if (this.processingLocks.has(update.marketId)) {
