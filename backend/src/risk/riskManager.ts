@@ -126,6 +126,32 @@ export class RiskManager {
             };
         }
 
+        // 1.5. CRITICAL: Ensure we reserve cash for all 50 positions
+        // Max order size = available cash / remaining slots (ensures even distribution)
+        const remainingSlots = Math.max(1, maxPositions - this.positions.size);
+        const cashPerSlot = this.cashBalance / remainingSlots;
+        const minOrderSize = 5.0; // Minimum $5 order to be meaningful
+        const maxOrderForSlot = Math.max(cashPerSlot, minOrderSize);
+
+        if (order.sizeUsdc > maxOrderForSlot && !existingPosition) {
+            // Adjust order size to fit within slot allocation
+            const adjustedSizeUsdc = Math.min(order.sizeUsdc, maxOrderForSlot);
+            const adjustedOrder = {
+                ...order,
+                sizeUsdc: adjustedSizeUsdc,
+                shares: adjustedSizeUsdc / order.price
+            };
+
+            warnings.push(`Order sized to $${adjustedSizeUsdc.toFixed(2)} to reserve cash for ${remainingSlots} slots`);
+
+            return {
+                approved: true,
+                originalOrder: order,
+                adjustedOrder,
+                warnings
+            };
+        }
+
         // 2. Check single order size limit
         const maxSingleOrder = config.bankroll * config.maxSingleOrderPct;
         if (order.sizeUsdc > maxSingleOrder) {
@@ -286,7 +312,15 @@ export class RiskManager {
             }
 
         } else {
-            // Processing Buy
+            // Processing Buy - SAFETY CHECK: don't go negative
+            if (filledUsdc > this.cashBalance) {
+                logger.warn('⚠️ Buy would exceed cash balance, limiting to available', {
+                    requested: filledUsdc.toFixed(2),
+                    available: this.cashBalance.toFixed(2)
+                });
+                // This shouldn't happen if checkOrder is working, but safety first
+                return;
+            }
             this.cashBalance -= filledUsdc;
 
             if (order.side === 'YES') {
