@@ -11,17 +11,18 @@
    git push -u origin main
    ```
 
-2. **Deploy on Railway**
+2. **Add PostgreSQL on Railway**
    - Go to [railway.app](https://railway.app)
    - Click "New Project" → "Deploy from GitHub repo"
    - Select your repository
-   - Railway will auto-detect the Dockerfile
+   - **IMPORTANT**: Click "New" → "Database" → "PostgreSQL"
+   - Railway will auto-link the DATABASE_URL
 
 3. **Set Environment Variables** (in Railway dashboard)
    ```
    NODE_ENV=production
    BOT_MODE=PAPER
-   BOT_BANKROLL=1000
+   BOT_BANKROLL=5000
    ```
 
 4. **Access Your App**
@@ -39,6 +40,10 @@ npm run build
 
 # Set environment
 export NODE_ENV=production
+export DATABASE_URL="postgresql://user:password@host:5432/dbname"
+
+# Run migrations
+cd backend && npx prisma db push && cd ..
 
 # Run in production
 npm run start:prod
@@ -50,25 +55,30 @@ npm run start:prod
 |----------|---------|-------------|
 | `NODE_ENV` | development | Set to `production` for deployment |
 | `BOT_MODE` | PAPER | Trading mode (PAPER/LIVE) |
-| `BOT_BANKROLL` | 1000 | Starting bankroll in USD |
+| `BOT_BANKROLL` | 5000 | Starting bankroll in USD |
 | `BOT_API_PORT` | 3000 | Server port |
-| `DATABASE_URL` | file:./bot.db | SQLite database path |
+| `DATABASE_URL` | *required* | PostgreSQL connection string |
 
 ## Notes
 
-- SQLite database will persist on Railway's volume
+- **PostgreSQL persists across deploys** - your positions and state are saved!
+- Railway auto-provides DATABASE_URL when you add PostgreSQL
 - The dashboard is served as static files from the backend
 - WebSocket connections will work automatically
-- CORS is enabled for all origins in development
 
 ## Troubleshooting
 
 **Database not initializing:**
 ```bash
-# Railway will run prisma generate during build
-# But if needed, you can add to build script:
-npm run build && cd backend && npx prisma db push
+# Run migrations on first deploy
+cd backend && npx prisma db push
+```
+
+**Resetting database (careful!):**
+```bash
+# This will DELETE all data
+cd backend && npx prisma db push --force-reset
 ```
 
 **Port issues:**
-Railway sets the `PORT` environment variable automatically. The bot uses port 3000 by default, which Railway will map correctly.
+Railway sets the `PORT` environment variable automatically.
