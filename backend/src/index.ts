@@ -28,6 +28,16 @@ import { RiskManager } from './risk/riskManager.js';
 import { PaperExecutor } from './execution/paperExecutor.js';
 import { Executor } from './execution/executor.js';
 
+// Safe JSON parse helper - prevents crashes from malformed API data
+function safeJsonParse<T>(json: string | undefined | null, fallback: T): T {
+    if (!json) return fallback;
+    try {
+        return JSON.parse(json);
+    } catch {
+        return fallback;
+    }
+}
+
 /**
  * Main Bot Orchestrator - Event-driven trading loop.
  */
@@ -221,8 +231,8 @@ class TradingBot {
                 const marketData = response.data;
 
                 if (marketData.outcomePrices) {
-                    const prices = JSON.parse(marketData.outcomePrices);
-                    const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+                    const prices = safeJsonParse<string[]>(marketData.outcomePrices, []);
+                    const outcomes = safeJsonParse<string[]>(marketData.outcomes, ['Yes', 'No']);
                     const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
                     const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
 
@@ -598,8 +608,8 @@ class TradingBot {
             const marketData = response.data;
 
             if (marketData.outcomePrices) {
-                const prices = JSON.parse(marketData.outcomePrices);
-                const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+                const prices = safeJsonParse<string[]>(marketData.outcomePrices, []);
+                const outcomes = safeJsonParse<string[]>(marketData.outcomes, ['Yes', 'No']);
 
                 // CRITICAL: outcomePrices order matches outcomes order
                 // outcomes could be ["Yes", "No"] or ["No", "Yes"]
@@ -702,8 +712,8 @@ class TradingBot {
                     const marketData = response.data;
 
                     if (marketData.outcomePrices) {
-                        const prices = JSON.parse(marketData.outcomePrices);
-                        const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+                        const prices = safeJsonParse<string[]>(marketData.outcomePrices, []);
+                        const outcomes = safeJsonParse<string[]>(marketData.outcomes, ['Yes', 'No']);
 
                         // CRITICAL: outcomePrices order matches outcomes order
                         const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
@@ -897,8 +907,8 @@ class TradingBot {
                 const marketData = response.data;
                 if (!marketData.outcomePrices) continue;
 
-                const prices = JSON.parse(marketData.outcomePrices);
-                const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+                const prices = safeJsonParse<string[]>(marketData.outcomePrices, []);
+                const outcomes = safeJsonParse<string[]>(marketData.outcomes, ['Yes', 'No']);
                 const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
                 const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
 
@@ -969,8 +979,8 @@ class TradingBot {
                     let resolutionPriceNo = 0.5;
 
                     if (marketData.outcomePrices) {
-                        const prices = JSON.parse(marketData.outcomePrices);
-                        const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+                        const prices = safeJsonParse<string[]>(marketData.outcomePrices, []);
+                        const outcomes = safeJsonParse<string[]>(marketData.outcomes, ['Yes', 'No']);
                         const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
                         const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
 
@@ -1111,8 +1121,8 @@ class TradingBot {
                 const marketData = response.data;
 
                 if (marketData.outcomePrices) {
-                    const prices = JSON.parse(marketData.outcomePrices);
-                    const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+                    const prices = safeJsonParse<string[]>(marketData.outcomePrices, []);
+                    const outcomes = safeJsonParse<string[]>(marketData.outcomes, ['Yes', 'No']);
                     const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
                     const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
 
