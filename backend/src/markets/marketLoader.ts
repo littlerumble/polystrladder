@@ -41,25 +41,46 @@ export class MarketLoader {
     }
 
     /**
-     * Fetch all active markets from Gamma API.
+     * Fetch all active markets from Gamma API with pagination.
      */
     async fetchMarkets(): Promise<GammaMarket[]> {
         try {
-            logger.info('Fetching markets from Gamma API...');
+            logger.info('Fetching markets from Gamma API (with pagination)...');
 
-            const response = await axios.get<GammaMarket[]>(`${GAMMA_API_BASE}/markets`, {
-                params: {
-                    closed: false,
-                    active: true,
-                    enableOrderBook: true,
-                    limit: 500,
-                    order: 'volume24hr',
-                    ascending: false
+            let allMarkets: GammaMarket[] = [];
+            let offset = 0;
+            const pageSize = 500;
+
+            while (true) {
+                const response = await axios.get<GammaMarket[]>(`${GAMMA_API_BASE}/markets`, {
+                    params: {
+                        closed: false,
+                        active: true,
+                        enableOrderBook: true,
+                        limit: pageSize,
+                        offset: offset,
+                        order: 'volume24hr',
+                        ascending: false
+                    }
+                });
+
+                allMarkets = allMarkets.concat(response.data);
+                logger.debug(`Fetched page at offset ${offset}: ${response.data.length} markets`);
+
+                if (response.data.length < pageSize) {
+                    break; // Last page
                 }
-            });
+                offset += pageSize;
 
-            logger.info(`Fetched ${response.data.length} markets from API`);
-            return response.data;
+                // Safety limit to prevent infinite loop
+                if (offset > 5000) {
+                    logger.warn('Reached pagination safety limit of 5000 markets');
+                    break;
+                }
+            }
+
+            logger.info(`Fetched total of ${allMarkets.length} markets from API (${Math.ceil(allMarkets.length / pageSize)} pages)`);
+            return allMarkets;
         } catch (error) {
             logger.error('Failed to fetch markets', { error: String(error) });
             throw error;
@@ -95,21 +116,35 @@ export class MarketLoader {
             // Must not have already ended
             if (endDate <= now) return false;
 
+            // BONUS: Sports events typically have gameStartTime - log for debugging
+            // Don't strictly require it since some sports markets might not have it
+            if (market.gameStartTime) {
+                logger.debug(`Sports event detected: ${market.question?.substring(0, 40)}... starts at ${market.gameStartTime}`);
+            }
+
             // Check category filters
             const category = market.category || market.events?.[0]?.category || '';
             const subcategory = market.subcategory || market.events?.[0]?.subcategory || '';
+            const questionLower = (market.question || '').toLowerCase();
+            const descLower = (market.description || '').toLowerCase();
+            const eventTitles = (market.events || []).map((e: any) => (e.title || '').toLowerCase()).join(' ');
+            const allText = `${questionLower} ${descLower} ${eventTitles}`;
 
-            // Exclude certain categories (only if category is not empty)
-            if (category && config.excludedCategories.some(exc =>
-                category.toLowerCase().includes(exc.toLowerCase()) ||
-                subcategory.toLowerCase().includes(exc.toLowerCase())
-            )) {
+            // CRITICAL: Exclude by checking question/description/event titles (since category is often NULL)
+            const hasExcludedTerm = config.excludedCategories.some((exc: string) => {
+                const excLower = exc.toLowerCase();
+                return allText.includes(excLower) ||
+                    category.toLowerCase().includes(excLower) ||
+                    subcategory.toLowerCase().includes(excLower);
+            });
+            if (hasExcludedTerm) {
+                logger.debug(`Excluded market (matched excluded term): ${market.question?.substring(0, 50)}...`);
                 return false;
             }
 
             // Include only allowed categories (skip if list is empty or category is null/empty)
             if (config.allowedCategories.length > 0 && category) {
-                const inAllowed = config.allowedCategories.some(allowed =>
+                const inAllowed = config.allowedCategories.some((allowed: string) =>
                     category.toLowerCase().includes(allowed.toLowerCase()) ||
                     subcategory.toLowerCase().includes(allowed.toLowerCase())
                 );
@@ -132,19 +167,30 @@ export class MarketLoader {
                 return false;
             }
 
-            // Sports keyword filtering - check if question contains sports-related terms
+            // MANDATORY: Sports keyword filtering - market MUST match at least one sports keyword
+            // This is the PRIMARY filter since categories are always NULL on Polymarket
             const sportsKeywords = config.sportsKeywords || [];
             if (sportsKeywords.length > 0) {
                 const questionLower = (market.question || '').toLowerCase();
                 const descLower = (market.description || '').toLowerCase();
-                const hasSportsKeyword = sportsKeywords.some((keyword: string) =>
-                    questionLower.includes(keyword.toLowerCase()) ||
-                    descLower.includes(keyword.toLowerCase())
-                );
-                if (!hasSportsKeyword) {
+                const eventTitles = (market.events || []).map((e: any) => (e.title || '').toLowerCase()).join(' ');
+                const allSearchText = `${questionLower} ${descLower} ${eventTitles}`;
+
+                const matchedKeyword = sportsKeywords.find((keyword: string) => {
+                    const kw = keyword.toLowerCase();
+                    return allSearchText.includes(kw);
+                });
+
+                if (!matchedKeyword) {
+                    // NO sports keyword found - REJECT this market
                     return false;
                 }
-                logger.debug(`Sports market found: ${market.question?.substring(0, 50)}...`);
+
+                logger.debug(`✅ Sports market included: "${market.question?.substring(0, 40)}..." matched keyword: "${matchedKeyword}"`);
+            } else {
+                // No keywords configured - reject all (fail safe)
+                logger.warn('No sportsKeywords configured - rejecting all markets');
+                return false;
             }
 
             return true;
@@ -196,21 +242,83 @@ export class MarketLoader {
     }
 
     /**
+     * Calculate profit potential score for a market.
+     * Higher score = better opportunity for profit.
+     * 
+     * Scoring factors:
+     * 1. Price in tradeable range (60-85%): Best for ladder strategy
+     * 2. Volume 24h: Higher volume = more trading activity
+     * 3. Liquidity: Better spreads and execution
+     * 4. Time to resolution: Closer = less risk of reversal
+     */
+    private calculateProfitScore(market: MarketData): number {
+        let score = 0;
+
+        // We don't have live prices here, so use volume and liquidity as proxies
+        // The actual price filtering happens when strategies run
+
+        // Factor 1: Volume 24h (normalized, max 40 points)
+        // Higher volume = more trading activity = more opportunities
+        const volumeScore = Math.min(market.volume24h / 100000, 1) * 40;
+        score += volumeScore;
+
+        // Factor 2: Liquidity (normalized, max 30 points)
+        // Higher liquidity = better price discovery and tighter spreads
+        const liquidityScore = Math.min(market.liquidity / 50000, 1) * 30;
+        score += liquidityScore;
+
+        // Factor 3: Time to resolution (max 20 points)
+        // Closer to resolution = less time for thesis to break
+        const now = new Date();
+        const hoursToEnd = (market.endDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+        if (hoursToEnd <= 6) {
+            score += 20;  // Best: resolves very soon
+        } else if (hoursToEnd <= 24) {
+            score += 15;  // Good: resolves today
+        } else if (hoursToEnd <= 48) {
+            score += 10;  // OK: resolves in 2 days
+        } else {
+            score += 5;   // Acceptable: resolves within 72h
+        }
+
+        // Factor 4: Volume/Liquidity ratio (max 10 points)
+        // High ratio = active market with good turnover
+        if (market.liquidity > 0) {
+            const turnover = market.volume24h / market.liquidity;
+            const turnoverScore = Math.min(turnover, 10);  // Cap at 10x
+            score += turnoverScore;
+        }
+
+        return score;
+    }
+
+    /**
      * Load markets, filter, and persist to database.
+     * Prioritizes markets with best profit potential using a scoring algorithm.
      */
     async loadAndPersistMarkets(): Promise<MarketData[]> {
         const rawMarkets = await this.fetchMarkets();
         let filteredMarkets = this.filterMarkets(rawMarkets);
 
-        // Sort by liquidity (best price discovery first) and take top N
+        // Calculate profit score for each market and select the top N
         const topN = configService.get('topNMarkets') || 10;
-        filteredMarkets = filteredMarkets
-            .sort((a, b) => b.liquidity - a.liquidity)
-            .slice(0, topN);
 
-        logger.info(`Selected top ${filteredMarkets.length} markets by liquidity`, {
+        // Score and sort markets by profit potential
+        const scoredMarkets = filteredMarkets.map(market => {
+            const score = this.calculateProfitScore(market);
+            return { market, score };
+        });
+
+        scoredMarkets.sort((a, b) => b.score - a.score);
+
+        filteredMarkets = scoredMarkets.slice(0, topN).map(s => s.market);
+
+        logger.info(`Selected top ${filteredMarkets.length} markets by PROFIT POTENTIAL`, {
             topN,
-            selected: filteredMarkets.map(m => m.question.substring(0, 40))
+            topScores: scoredMarkets.slice(0, 5).map(s => ({
+                question: s.market.question.substring(0, 35),
+                score: s.score.toFixed(2)
+            }))
         });
 
         // Persist to database

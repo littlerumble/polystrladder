@@ -28,10 +28,13 @@ export interface ExitCheckResult {
 
 /**
  * Check if consensus has broken (price below first ladder level).
+ * Now checks the correct price based on which side we hold.
  */
 export function checkConsensusBreak(
     state: MarketState,
-    currentPriceYes: number
+    currentPriceYes: number,
+    currentPriceNo: number,
+    positionSide: 'YES' | 'NO' | null
 ): { isBreaking: boolean; updatedState: MarketState } {
     const ladderLevels: number[] = configService.get('ladderLevels') || [0.65, 0.75, 0.85, 0.92, 0.95];
     const firstLadderLevel = ladderLevels[0] || 0.65;
@@ -39,20 +42,24 @@ export function checkConsensusBreak(
     const breakDurationMs = consensusBreakMinutes * 60 * 1000;
 
     // Only check if we have a position (ladder filled)
-    if (state.ladderFilled.length === 0) {
+    if (state.ladderFilled.length === 0 || !positionSide) {
         return { isBreaking: false, updatedState: state };
     }
+
+    // CRITICAL: Check the correct price based on which side we hold
+    const priceToCheck = positionSide === 'YES' ? currentPriceYes : currentPriceNo;
 
     const now = new Date();
     let updatedState = { ...state };
 
-    if (currentPriceYes < firstLadderLevel) {
+    if (priceToCheck < firstLadderLevel) {
         if (!state.consensusBreakStartTime) {
             updatedState.consensusBreakStartTime = now;
             updatedState.consensusBreakConfirmed = false;
             logger.info('⚠️ Consensus break started - monitoring', {
                 marketId: state.marketId,
-                currentPrice: currentPriceYes.toFixed(3),
+                side: positionSide,
+                currentPrice: priceToCheck.toFixed(3),
                 firstLadder: firstLadderLevel,
                 monitoringFor: `${consensusBreakMinutes} minutes`
             });
@@ -62,7 +69,8 @@ export function checkConsensusBreak(
                 updatedState.consensusBreakConfirmed = true;
                 logger.info('🛑 Consensus break CONFIRMED - thesis invalidated', {
                     marketId: state.marketId,
-                    currentPrice: currentPriceYes.toFixed(3),
+                    side: positionSide,
+                    currentPrice: priceToCheck.toFixed(3),
                     brokenFor: `${Math.round(breakDuration / 60000)} minutes`
                 });
             }
@@ -72,7 +80,8 @@ export function checkConsensusBreak(
         if (state.consensusBreakStartTime) {
             logger.info('✅ Price recovered - consensus intact', {
                 marketId: state.marketId,
-                currentPrice: currentPriceYes.toFixed(3)
+                side: positionSide,
+                currentPrice: priceToCheck.toFixed(3)
             });
         }
         updatedState.consensusBreakStartTime = undefined;
@@ -83,21 +92,27 @@ export function checkConsensusBreak(
 
 /**
  * Check if moon bag should be exited (price dropped below 65%).
+ * Now checks the correct price based on which side we hold.
  */
 export function checkMoonBagExit(
     state: MarketState,
-    currentPriceYes: number
+    currentPriceYes: number,
+    currentPriceNo: number,
+    positionSide: 'YES' | 'NO' | null
 ): { shouldExit: boolean; reason: string } {
     if (!state.moonBagActive) {
         return { shouldExit: false, reason: '' };
     }
 
     // Moon bag exits if price drops below 65% (first ladder level)
+    // CRITICAL: Check the correct price based on which side we hold
     const MOON_BAG_EXIT_THRESHOLD = 0.65;
-    if (currentPriceYes < MOON_BAG_EXIT_THRESHOLD) {
+    const priceToCheck = positionSide === 'YES' ? currentPriceYes :
+        positionSide === 'NO' ? currentPriceNo : currentPriceYes;
+    if (priceToCheck < MOON_BAG_EXIT_THRESHOLD) {
         return {
             shouldExit: true,
-            reason: `Moon bag exit: price ${(currentPriceYes * 100).toFixed(1)}% < 65% threshold`
+            reason: `Moon bag exit (${positionSide}): price ${(priceToCheck * 100).toFixed(1)}% < 65% threshold`
         };
     }
 
@@ -248,24 +263,29 @@ export function shouldTakeProfit(
 
     // Check for moon bag exit - only sell if price drops below 65% (first ladder level)
     // This is a clear threshold: if thesis is valid, price should stay above 65%
+    // CRITICAL: Check the correct price based on which side we hold
     const MOON_BAG_EXIT_THRESHOLD = 0.65;
     if (moonBagActive) {
-        if (currentPriceYes < MOON_BAG_EXIT_THRESHOLD) {
-            const costBasis = position.costBasisYes;
-            const currentValue = position.sharesYes * currentPriceYes;
-            const profitPct = costBasis > 0 ? (currentValue - costBasis) / costBasis : 0;
+        // Determine which side the moon bag is for and check correct price
+        const isYesMoonBag = position.sharesYes > 0;
+        const priceToCheck = isYesMoonBag ? currentPriceYes : currentPriceNo;
+        const costBasis = isYesMoonBag ? position.costBasisYes : position.costBasisNo;
+        const shares = isYesMoonBag ? position.sharesYes : position.sharesNo;
+        const currentValue = shares * priceToCheck;
+        const profitPct = costBasis > 0 ? (currentValue - costBasis) / costBasis : 0;
 
+        if (priceToCheck < MOON_BAG_EXIT_THRESHOLD) {
             return {
                 shouldExit: true,
                 profitPct,
-                reason: `🌙 MOON BAG EXIT: Price ${(currentPriceYes * 100).toFixed(1)}% dropped below 65% threshold`,
+                reason: `🌙 MOON BAG EXIT (${isYesMoonBag ? 'YES' : 'NO'}): Price ${(priceToCheck * 100).toFixed(1)}% dropped below 65% threshold`,
                 isProfit: profitPct > 0,
                 exitPct: 1.0,  // Full exit of remaining moon bag
                 isMoonBagExit: true
             };
         }
         // Moon bag active and price is above 65% - hold until resolution
-        return { shouldExit: false, profitPct: 0, reason: 'Moon bag holding - price above 65%', isProfit: false, exitPct: 0, isMoonBagExit: false };
+        return { shouldExit: false, profitPct: 0, reason: `Moon bag holding (${isYesMoonBag ? 'YES' : 'NO'}) - price ${(priceToCheck * 100).toFixed(1)}% above 65%`, isProfit: false, exitPct: 0, isMoonBagExit: false };
     }
 
     // Check YES position for initial profit taking

@@ -78,6 +78,15 @@ class ConfigService {
         if (process.env.BOT_ALLOWED_CATEGORIES) {
             this.config.allowedCategories = process.env.BOT_ALLOWED_CATEGORIES.split(',');
         }
+        if (process.env.BOT_TOP_N_MARKETS) {
+            this.config.topNMarkets = parseInt(process.env.BOT_TOP_N_MARKETS, 10);
+        }
+        if (process.env.BOT_MIN_VOLUME_24H) {
+            this.config.minVolume24h = parseFloat(process.env.BOT_MIN_VOLUME_24H);
+        }
+        if (process.env.BOT_MIN_LIQUIDITY) {
+            this.config.minLiquidity = parseFloat(process.env.BOT_MIN_LIQUIDITY);
+        }
     }
 
     public get<K extends keyof Config>(key: K): Config[K] {

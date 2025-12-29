@@ -97,6 +97,7 @@ export interface MarketState {
     priceHistory: { price: number; timestamp: Date }[];
     ladderFilled: number[];
     activeTradeSide?: 'YES' | 'NO';    // Which side ladder levels are for (reset if switching)
+    lockedTradeSide?: 'YES' | 'NO';    // PERMANENT: Once traded, never flip to opposite side
     exposureYes: number;
     exposureNo: number;
     tailActive: boolean;

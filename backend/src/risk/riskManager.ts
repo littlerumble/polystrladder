@@ -199,12 +199,12 @@ export class RiskManager {
             };
         }
 
-        // 4. Check order frequency (anti-spam)
+        // 4. Check order frequency (anti-spam) - increased limit for more aggressive trading
         const recentForMarket = this.recentOrders.get(order.marketId) || [];
         const oneMinuteAgo = Date.now() - 60000;
         const recentCount = recentForMarket.filter(d => d.getTime() > oneMinuteAgo).length;
 
-        if (recentCount >= 5) {
+        if (recentCount >= 50) {
             return {
                 approved: false,
                 originalOrder: order,

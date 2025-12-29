@@ -45,6 +45,20 @@ export function generateLadderOrders(
     const maxBuyPrice = config.maxBuyPrice || 0.92;
     const firstLadder = ladderLevels[0] || 0.60;
 
+    // DEBUG: Log every ladder call with sweet-spot prices
+    if ((priceYes >= 0.55 && priceYes <= 0.95) || (priceNo >= 0.55 && priceNo <= 0.95)) {
+        logger.info('🎯 LADDER DEBUG', {
+            marketId: state.marketId,
+            priceYes: (priceYes * 100).toFixed(1) + '%',
+            priceNo: (priceNo * 100).toFixed(1) + '%',
+            firstLadder,
+            maxBuyPrice,
+            filledLevels: state.ladderFilled,
+            activeTradeSide: state.activeTradeSide,
+            lockedTradeSide: state.lockedTradeSide
+        });
+    }
+
     // Determine which side to trade:
     // - If YES >= 60%: buy YES
     // - Else if NO >= 60%: buy NO
@@ -84,20 +98,26 @@ export function generateLadderOrders(
         return orders;
     }
 
-    // CRITICAL: Detect side switch and reset ladder if switching
-    // If we were trading YES and now want to trade NO (or vice versa), 
-    // the filled levels are for the wrong side - reset them
+    // CRITICAL: Detect side switch and REJECT if market is locked to opposite side
+    // Once a market is traded on one side, it can NEVER flip to the other
     let filledLevels: Set<number>;
-    if (state.activeTradeSide && state.activeTradeSide !== tradeSide) {
-        // Side switch detected! Reset ladder for new side
-        logger.info('🔄 SIDE SWITCH detected', {
+    if (state.lockedTradeSide && state.lockedTradeSide !== tradeSide) {
+        // REJECT - market is permanently locked to the other side
+        logger.info('🚫 SIDE FLIP BLOCKED - Market permanently locked to opposite side', {
             marketId: state.marketId,
-            oldSide: state.activeTradeSide,
-            newSide: tradeSide,
-            message: 'Resetting ladder levels for new side'
+            lockedSide: state.lockedTradeSide,
+            attemptedSide: tradeSide,
+            message: 'Will NOT trade opposite side. Exiting only.'
         });
-        filledLevels = new Set();
-        // Note: The caller should update state.activeTradeSide and state.ladderFilled
+        return orders;  // Return empty orders - do not trade opposite side
+    } else if (state.activeTradeSide && state.activeTradeSide !== tradeSide && !state.lockedTradeSide) {
+        // First time detecting a flip attempt on an unlocked market - block it
+        logger.info('🚫 SIDE FLIP BLOCKED - Cannot flip from current side', {
+            marketId: state.marketId,
+            currentSide: state.activeTradeSide,
+            attemptedSide: tradeSide
+        });
+        return orders;  // Return empty - don't allow flipping
     } else {
         filledLevels = new Set(state.ladderFilled);
     }

@@ -119,26 +119,13 @@ class TradingBot {
                     this.tokenToMarket.set(tokenId, market.marketId);
                 }
 
-                // Initialize market state if not exists
+                // CRITICAL: Initialize market state so handlePriceUpdate can process it
                 if (!this.marketStates.has(market.marketId)) {
                     await this.initializeMarketState(market.marketId);
                 }
             }
 
-            // Setup event handlers
-            this.setupEventHandlers();
-
-            // Connect to CLOB WebSocket
-            await this.clobFeed.connect();
-
-            // Subscribe to market price feeds
-            this.clobFeed.subscribeToMarkets(
-                markets.map(m => ({
-                    marketId: m.marketId,
-                    clobTokenIds: m.clobTokenIds,
-                    outcomes: m.outcomes  // CRITICAL: Pass outcomes so we know which token is YES vs NO
-                }))
-            );
+            logger.info(`Initialized ${this.marketStates.size} market states for trading`);
 
             // Start periodic tasks
             this.marketLoader.startPeriodicRefresh();
@@ -325,6 +312,20 @@ class TradingBot {
                 proposedOrders = generateVolatilityOrders(updatedState, tokenIdYes, tokenIdNo);
             }
 
+            // DEBUG: Log order generation for sweet-spot markets
+            if ((update.priceYes >= 0.60 && update.priceYes <= 0.92) || (update.priceNo >= 0.60 && update.priceNo <= 0.92)) {
+                logger.info('📊 ORDER GENERATION DEBUG', {
+                    marketId: update.marketId,
+                    priceYes: (update.priceYes * 100).toFixed(1) + '%',
+                    priceNo: (update.priceNo * 100).toFixed(1) + '%',
+                    regime: newRegime,
+                    strategy,
+                    ordersGenerated: proposedOrders.length,
+                    tokenIdYes: tokenIdYes ? 'exists' : 'MISSING',
+                    tokenIdNo: tokenIdNo ? 'exists' : 'MISSING'
+                });
+            }
+
             // 5. Check for tail insurance opportunity
             if (shouldConsiderTailInsurance(
                 newRegime,
@@ -399,7 +400,7 @@ class TradingBot {
                 }
 
                 // First, check and track consensus break state
-                const consensusCheck = exitStrategy.checkConsensusBreak(updatedState, update.priceYes);
+                const consensusCheck = exitStrategy.checkConsensusBreak(updatedState, update.priceYes, update.priceNo, positionSide);
                 updatedState = consensusCheck.updatedState;
 
                 // Check if we should exit (profit, moon bag exit, or thesis stop)
@@ -496,19 +497,19 @@ class TradingBot {
                         const level = parseFloat(order.strategyDetail.split('_')[1]);
                         const tradeSide = order.side === Side.YES ? 'YES' : 'NO';
 
-                        // Check for side switch - if we're trading a different side, reset ladder
-                        if (updatedState.activeTradeSide && updatedState.activeTradeSide !== tradeSide) {
-                            logger.info('🔄 SIDE SWITCH confirmed - resetting ladder', {
+                        // PERMANENT SIDE LOCK: Set on first trade, never allows opposite side
+                        if (!updatedState.lockedTradeSide) {
+                            updatedState.lockedTradeSide = tradeSide;
+                            logger.info('🔒 SIDE LOCKED - Market permanently locked to this side', {
                                 marketId: update.marketId,
-                                oldSide: updatedState.activeTradeSide,
-                                newSide: tradeSide
+                                lockedSide: tradeSide
                             });
-                            updatedState.ladderFilled = []; // Reset for new side
                         }
 
                         // Mark level filled and update active trade side
                         let newState = markLadderFilled(updatedState, level);
                         newState.activeTradeSide = tradeSide;
+                        newState.lockedTradeSide = updatedState.lockedTradeSide;  // Preserve the lock
 
                         this.marketStates.set(update.marketId, newState);
                         // CRITICAL: Persist to DB so ladder level stays filled on restart
@@ -771,6 +772,7 @@ class TradingBot {
                 priceHistory: [],
                 ladderFilled: JSON.parse(dbState.ladderFilled),
                 activeTradeSide: dbState.activeTradeSide as 'YES' | 'NO' | undefined,
+                lockedTradeSide: (dbState as any).lockedTradeSide as 'YES' | 'NO' | undefined,  // PERMANENT side lock
                 exposureYes: 0,
                 exposureNo: 0,
                 tailActive: dbState.tailActive,
@@ -815,6 +817,7 @@ class TradingBot {
                 regime: state.regime,
                 ladderFilled: JSON.stringify(state.ladderFilled),
                 activeTradeSide: state.activeTradeSide || null,
+                lockedTradeSide: state.lockedTradeSide || null,  // PERMANENT side lock
                 tailActive: state.tailActive,
                 stopLossTriggeredAt: state.stopLossTriggeredAt || null,
                 cooldownUntil: state.cooldownUntil || null,
@@ -825,6 +828,7 @@ class TradingBot {
                 regime: state.regime,
                 ladderFilled: JSON.stringify(state.ladderFilled),
                 activeTradeSide: state.activeTradeSide || null,
+                lockedTradeSide: state.lockedTradeSide || null,  // PERMANENT side lock
                 tailActive: state.tailActive,
                 stopLossTriggeredAt: state.stopLossTriggeredAt || null,
                 cooldownUntil: state.cooldownUntil || null,

@@ -171,6 +171,22 @@ export default function DecisionPanel({ positions, marketStates }: DecisionPanel
         return { position, state, status };
     });
 
+    // Sort by game start time - upcoming games first, then by question
+    positionsWithState.sort((a, b) => {
+        const timeA = a.position.market?.gameStartTime ? new Date(a.position.market.gameStartTime).getTime() : Infinity;
+        const timeB = b.position.market?.gameStartTime ? new Date(b.position.market.gameStartTime).getTime() : Infinity;
+
+        // If both have game times, sort by soonest first
+        if (timeA !== Infinity && timeB !== Infinity) {
+            return timeA - timeB;
+        }
+        // Markets with game time come first
+        if (timeA !== Infinity) return -1;
+        if (timeB !== Infinity) return 1;
+        // Otherwise sort by question alphabetically
+        return (a.position.market?.question || '').localeCompare(b.position.market?.question || '');
+    });
+
     return (
         <div className="decision-panel">
             <div className="panel-header">
