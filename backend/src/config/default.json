@@ -3,7 +3,7 @@
     "bankroll": 5000,
     "maxMarketExposurePct": 0.04,
     "maxSingleOrderPct": 0.02,
-    "topNMarkets": 50,
+    "topNMarkets": 200,
     "maxActivePositions": 15,
     "allowedCategories": [
         "Sports"
