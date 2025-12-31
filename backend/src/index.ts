@@ -815,15 +815,15 @@ class TradingBot {
                 lastPriceYes: priceYes,
                 lastPriceNo: priceNo,
                 priceHistory: [],
-                ladderFilled: JSON.parse(dbState.ladderFilled),
-                ladderLevelTouched: JSON.parse((dbState as any).ladderLevelTouched || '{}'),  // Parse from DB
+                ladderFilled: JSON.parse(dbState.ladderFilled || "[]"),
+                ladderLevelTouched: JSON.parse(dbState.ladderLevelTouched || '{}'),  // Parse from DB
                 activeTradeSide: dbState.activeTradeSide as 'YES' | 'NO' | undefined,
-                lockedTradeSide: (dbState as any).lockedTradeSide as 'YES' | 'NO' | undefined,  // PERMANENT side lock
+                lockedTradeSide: dbState.lockedTradeSide as 'YES' | 'NO' | undefined,  // PERMANENT side lock
                 exposureYes: 0,
                 exposureNo: 0,
                 tailActive: dbState.tailActive,
-                trailingStopActive: (dbState as any).trailingStopActive || false,  // Load from DB
-                highWaterMark: (dbState as any).highWaterMark || 0,                 // Load from DB
+                trailingStopActive: dbState.trailingStopActive || false,  // Load from DB
+                highWaterMark: dbState.highWaterMark || 0,                 // Load from DB
                 lastUpdated: dbState.lastProcessed
             };
 
@@ -855,32 +855,60 @@ class TradingBot {
             ? state.lastUpdated
             : new Date();
 
-        await this.prisma.marketState.upsert({
-            where: { marketId: state.marketId },
-            update: {
-                regime: state.regime,
-                ladderFilled: JSON.stringify(state.ladderFilled),
-                ladderLevelTouched: JSON.stringify(state.ladderLevelTouched),  // Persist hold-above state
-                activeTradeSide: state.activeTradeSide || null,
-                lockedTradeSide: state.lockedTradeSide || null,  // PERMANENT side lock
-                tailActive: state.tailActive,
-                trailingStopActive: state.trailingStopActive,    // Persist trailing stop state
-                highWaterMark: state.highWaterMark,              // Persist high water mark
-                lastProcessed
-            },
-            create: {
-                marketId: state.marketId,
-                regime: state.regime,
-                ladderFilled: JSON.stringify(state.ladderFilled),
-                ladderLevelTouched: JSON.stringify(state.ladderLevelTouched),  // Persist hold-above state
-                activeTradeSide: state.activeTradeSide || null,
-                lockedTradeSide: state.lockedTradeSide || null,  // PERMANENT side lock
-                tailActive: state.tailActive,
-                trailingStopActive: state.trailingStopActive,    // Persist trailing stop state
-                highWaterMark: state.highWaterMark,              // Persist high water mark
-                lastProcessed
+        try {
+            await this.prisma.marketState.upsert({
+                where: { marketId: state.marketId },
+                update: {
+                    regime: state.regime,
+                    ladderFilled: JSON.stringify(state.ladderFilled),
+                    ladderLevelTouched: JSON.stringify(state.ladderLevelTouched),  // Persist hold-above state
+                    activeTradeSide: state.activeTradeSide || null,
+                    lockedTradeSide: state.lockedTradeSide || null,  // PERMANENT side lock
+                    tailActive: state.tailActive,
+                    trailingStopActive: state.trailingStopActive,    // Persist trailing stop state
+                    highWaterMark: state.highWaterMark,              // Persist high water mark
+                    lastProcessed
+                },
+                create: {
+                    marketId: state.marketId,
+                    regime: state.regime,
+                    ladderFilled: JSON.stringify(state.ladderFilled),
+                    ladderLevelTouched: JSON.stringify(state.ladderLevelTouched),  // Persist hold-above state
+                    activeTradeSide: state.activeTradeSide || null,
+                    lockedTradeSide: state.lockedTradeSide || null,  // PERMANENT side lock
+                    tailActive: state.tailActive,
+                    trailingStopActive: state.trailingStopActive,    // Persist trailing stop state
+                    highWaterMark: state.highWaterMark,              // Persist high water mark
+                    lastProcessed
+                }
+            });
+        } catch (error: any) {
+            // Handle unique constraint violation (P2002) which can happen in race conditions
+            if (error.code === 'P2002') {
+                logger.warn(`Race condition in persistMarketState for ${state.marketId}, retrying update...`);
+                // Retry as update only
+                try {
+                    await this.prisma.marketState.update({
+                        where: { marketId: state.marketId },
+                        data: {
+                            regime: state.regime,
+                            ladderFilled: JSON.stringify(state.ladderFilled),
+                            ladderLevelTouched: JSON.stringify(state.ladderLevelTouched),
+                            activeTradeSide: state.activeTradeSide || null,
+                            lockedTradeSide: state.lockedTradeSide || null,
+                            tailActive: state.tailActive,
+                            trailingStopActive: state.trailingStopActive,
+                            highWaterMark: state.highWaterMark,
+                            lastProcessed
+                        }
+                    });
+                } catch (retryError) {
+                    logger.error(`Failed to persist state for ${state.marketId} after retry: ${retryError}`);
+                }
+            } else {
+                logger.error(`Failed to persist state for ${state.marketId}: ${error}`);
             }
-        });
+        }
     }
 
     /**
