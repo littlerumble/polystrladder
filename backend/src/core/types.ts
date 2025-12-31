@@ -102,14 +102,6 @@ export interface MarketState {
     exposureNo: number;
     tailActive: boolean;
     lastUpdated: Date;
-
-    // Thesis-based stop loss tracking (kept for consensus break logic if needed later)
-    consensusBreakStartTime?: Date;   // When price first dropped below first ladder
-    consensusBreakConfirmed: boolean; // True if break held for required duration
-
-    // Pre-game stop loss cooldown (exit at 60%, re-enter at 70% after 10 min)
-    stopLossTriggeredAt?: Date;       // When pre-game stop loss fired (price < 60%)
-    cooldownUntil?: Date;             // When re-entry is allowed (stopLoss + 10 min)
 }
 
 /**

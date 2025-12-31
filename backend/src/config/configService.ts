@@ -13,10 +13,6 @@ export interface Config {
     maxSingleOrderPct: number;
     topNMarkets: number;
     maxActivePositions: number;
-    takeProfitPct: number;
-    stopLossPct: number;
-    consensusBreakMinutes: number;
-    minHoldTimeMinutes: number;
     allowedCategories: string[];
     excludedCategories: string[];
     sportsKeywords: string[];

@@ -610,8 +610,7 @@ class TradingBot {
             exposureYes: 0,
             exposureNo: 0,
             tailActive: false,
-            lastUpdated: new Date(),
-            consensusBreakConfirmed: false
+            lastUpdated: new Date()
         };
         this.marketStates.set(marketId, state);
 
@@ -724,10 +723,7 @@ class TradingBot {
                 exposureYes: 0,
                 exposureNo: 0,
                 tailActive: dbState.tailActive,
-                lastUpdated: dbState.lastProcessed,
-                consensusBreakConfirmed: false,
-                stopLossTriggeredAt: dbState.stopLossTriggeredAt || undefined,
-                cooldownUntil: dbState.cooldownUntil || undefined
+                lastUpdated: dbState.lastProcessed
             };
 
             // Load exposure from positions
@@ -766,8 +762,6 @@ class TradingBot {
                 activeTradeSide: state.activeTradeSide || null,
                 lockedTradeSide: state.lockedTradeSide || null,  // PERMANENT side lock
                 tailActive: state.tailActive,
-                stopLossTriggeredAt: state.stopLossTriggeredAt || null,
-                cooldownUntil: state.cooldownUntil || null,
                 lastProcessed
             },
             create: {
@@ -777,8 +771,6 @@ class TradingBot {
                 activeTradeSide: state.activeTradeSide || null,
                 lockedTradeSide: state.lockedTradeSide || null,  // PERMANENT side lock
                 tailActive: state.tailActive,
-                stopLossTriggeredAt: state.stopLossTriggeredAt || null,
-                cooldownUntil: state.cooldownUntil || null,
                 lastProcessed
             }
         });

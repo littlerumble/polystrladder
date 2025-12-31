@@ -5,9 +5,6 @@
     "maxSingleOrderPct": 0.0125,
     "topNMarkets": 500,
     "maxActivePositions": 50,
-    "takeProfitPct": 0.20,
-    "stopLossPct": 0.20,
-    "consensusBreakMinutes": 0,
     "allowedCategories": [
         "Sports"
     ],
