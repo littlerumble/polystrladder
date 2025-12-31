@@ -28,15 +28,26 @@ import { strategyLogger as logger } from '../core/logger.js';
 
 // Confidence weights for each ladder level (must sum to 1.0)
 // Lower levels = less capital, higher levels = more capital
-const CONFIDENCE_WEIGHTS = [0.10, 0.15, 0.25, 0.25, 0.25];
+// Updated to match 4 ladder levels: [0.65, 0.70, 0.80, 0.90]
+const CONFIDENCE_WEIGHTS = [0.15, 0.20, 0.30, 0.35];
+
+// Hold-above time: price must stay above level for this duration before buying
+// Prevents buying on brief spikes that immediately reverse
+const LADDER_HOLD_TIME_MS = 180_000; // 3 minutes
+
+export interface LadderResult {
+    orders: ProposedOrder[];
+    updatedTouchedLevels: Record<number, number>;  // Updated touched state to persist
+}
 
 export function generateLadderOrders(
     state: MarketState,
     tokenIdYes: string,
     tokenIdNo?: string
-): ProposedOrder[] {
+): LadderResult {
     const config = configService.getAll();
     const orders: ProposedOrder[] = [];
+    const now = Date.now();
 
     const ladderLevels: number[] = config.ladderLevels;
     const maxExposure = config.bankroll * config.maxMarketExposurePct;
@@ -44,6 +55,9 @@ export function generateLadderOrders(
     const priceNo = state.lastPriceNo;
     const maxBuyPrice = config.maxBuyPrice || 0.90;
     const firstLadder = ladderLevels[0] || 0.65;
+
+    // Copy touched levels to mutate
+    const touchedLevels: Record<number, number> = { ...state.ladderLevelTouched };
 
     // DEBUG: Log every ladder call with sweet-spot prices
     if ((priceYes >= 0.55 && priceYes <= 0.95) || (priceNo >= 0.55 && priceNo <= 0.95)) {
@@ -54,6 +68,7 @@ export function generateLadderOrders(
             firstLadder,
             maxBuyPrice,
             filledLevels: state.ladderFilled,
+            touchedLevels: Object.keys(touchedLevels).length,
             activeTradeSide: state.activeTradeSide,
             lockedTradeSide: state.lockedTradeSide
         });
@@ -77,6 +92,7 @@ export function generateLadderOrders(
         tokenId = tokenIdNo;
     } else {
         // Neither side has conviction - wait
+        // Also reset any touched levels since price dropped below all thresholds
         logger.debug('Neither side meets ladder criteria', {
             marketId: state.marketId,
             priceYes,
@@ -84,7 +100,7 @@ export function generateLadderOrders(
             firstLadder,
             maxBuyPrice
         });
-        return orders;
+        return { orders, updatedTouchedLevels: touchedLevels };
     }
 
     // Don't buy if price is already too high (no upside left)
@@ -95,7 +111,7 @@ export function generateLadderOrders(
             price: tradePrice,
             maxBuyPrice
         });
-        return orders;
+        return { orders, updatedTouchedLevels: touchedLevels };
     }
 
     // CRITICAL: Detect side switch and REJECT if market is locked to opposite side
@@ -109,7 +125,7 @@ export function generateLadderOrders(
             attemptedSide: tradeSide,
             message: 'Will NOT trade opposite side. Exiting only.'
         });
-        return orders;  // Return empty orders - do not trade opposite side
+        return { orders, updatedTouchedLevels: touchedLevels };
     } else if (state.activeTradeSide && state.activeTradeSide !== tradeSide && !state.lockedTradeSide) {
         // First time detecting a flip attempt on an unlocked market - block it
         logger.info('🚫 SIDE FLIP BLOCKED - Cannot flip from current side', {
@@ -117,7 +133,7 @@ export function generateLadderOrders(
             currentSide: state.activeTradeSide,
             attemptedSide: tradeSide
         });
-        return orders;  // Return empty - don't allow flipping
+        return { orders, updatedTouchedLevels: touchedLevels };
     } else {
         filledLevels = new Set(state.ladderFilled);
     }
@@ -130,47 +146,81 @@ export function generateLadderOrders(
             continue;
         }
 
-        // Check if price has reached this ladder level (and is still below max)
+        // Check if price is at or above this ladder level
         if (tradePrice >= ladderLevel && tradePrice <= maxBuyPrice) {
-            // Use confidence-weighted sizing
-            // Higher levels get more capital
-            const weight = CONFIDENCE_WEIGHTS[i] ?? (1 / ladderLevels.length);
-            const sizeUsdc = maxExposure * weight;
-            const shares = sizeUsdc / tradePrice;
-
-            const order: ProposedOrder = {
-                marketId: state.marketId,
-                tokenId: tokenId,
-                side: tradeSide === 'YES' ? Side.YES : Side.NO,
-                price: tradePrice,
-                sizeUsdc,
-                shares,
-                strategy: StrategyType.LADDER_COMPRESSION,
-                strategyDetail: `ladder_${ladderLevel}_${tradeSide}_weight_${(weight * 100).toFixed(0)}pct`,
-                confidence: calculateLadderConfidence(ladderLevel, tradePrice)
-            };
-
-            orders.push(order);
-
-            logger.strategy('LADDER_TRIGGER', {
-                marketId: state.marketId,
-                regime: state.regime,
-                strategy: 'LADDER_COMPRESSION',
-                priceYes,
-                priceNo,
-                details: {
+            // Record first touch if not already recorded
+            if (!touchedLevels[ladderLevel]) {
+                touchedLevels[ladderLevel] = now;
+                logger.info('📍 LADDER LEVEL TOUCHED', {
+                    marketId: state.marketId,
+                    level: (ladderLevel * 100).toFixed(0) + '%',
                     side: tradeSide,
-                    ladderLevel,
+                    holdTimeRequired: `${LADDER_HOLD_TIME_MS / 1000}s`
+                });
+            }
+
+            // Check if price has held above for required time
+            const touchedAt = touchedLevels[ladderLevel];
+            const holdTime = now - touchedAt;
+
+            if (holdTime >= LADDER_HOLD_TIME_MS) {
+                // Price held above long enough - generate buy order
+                const weight = CONFIDENCE_WEIGHTS[i] ?? (1 / ladderLevels.length);
+                const sizeUsdc = maxExposure * weight;
+                const shares = sizeUsdc / tradePrice;
+
+                const order: ProposedOrder = {
+                    marketId: state.marketId,
+                    tokenId: tokenId,
+                    side: tradeSide === 'YES' ? Side.YES : Side.NO,
+                    price: tradePrice,
                     sizeUsdc,
                     shares,
-                    weight: `${(weight * 100).toFixed(0)}%`,
-                    tier: i + 1
-                }
+                    strategy: StrategyType.LADDER_COMPRESSION,
+                    strategyDetail: `ladder_${ladderLevel}_${tradeSide}_weight_${(weight * 100).toFixed(0)}pct`,
+                    confidence: calculateLadderConfidence(ladderLevel, tradePrice)
+                };
+
+                orders.push(order);
+
+                logger.strategy('LADDER_TRIGGER', {
+                    marketId: state.marketId,
+                    regime: state.regime,
+                    strategy: 'LADDER_COMPRESSION',
+                    priceYes,
+                    priceNo,
+                    details: {
+                        side: tradeSide,
+                        ladderLevel,
+                        sizeUsdc,
+                        shares,
+                        weight: `${(weight * 100).toFixed(0)}%`,
+                        tier: i + 1,
+                        holdTime: `${(holdTime / 1000).toFixed(0)}s`
+                    }
+                });
+            } else {
+                logger.debug('LADDER HOLD PENDING', {
+                    marketId: state.marketId,
+                    level: (ladderLevel * 100).toFixed(0) + '%',
+                    holdTime: `${(holdTime / 1000).toFixed(0)}s`,
+                    required: `${LADDER_HOLD_TIME_MS / 1000}s`,
+                    remaining: `${((LADDER_HOLD_TIME_MS - holdTime) / 1000).toFixed(0)}s`
+                });
+            }
+        } else if (tradePrice < ladderLevel && touchedLevels[ladderLevel]) {
+            // Price dropped below level - reset timer
+            delete touchedLevels[ladderLevel];
+            logger.info('📉 LADDER LEVEL RESET', {
+                marketId: state.marketId,
+                level: (ladderLevel * 100).toFixed(0) + '%',
+                reason: 'Price dropped below level',
+                currentPrice: (tradePrice * 100).toFixed(1) + '%'
             });
         }
     }
 
-    return orders;
+    return { orders, updatedTouchedLevels: touchedLevels };
 }
 
 /**

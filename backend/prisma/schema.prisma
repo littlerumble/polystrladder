@@ -154,6 +154,7 @@ model MarketState {
   market                Market    @relation(fields: [marketId], references: [id])
   regime                String    @default("MID_CONSENSUS")
   ladderFilled          String    @default("[]") // JSON array of filled ladder levels
+  ladderLevelTouched    String    @default("{}") @db.Text // JSON: level -> timestamp when first touched
   activeTradeSide       String?   // 'YES' or 'NO' - which side ladder is tracking (reset if switching)
   lockedTradeSide       String?   // 'YES' or 'NO' - once set, bot will NEVER trade opposite side
   tailActive            Boolean   @default(false)

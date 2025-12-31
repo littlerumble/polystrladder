@@ -21,7 +21,7 @@ import { ClobFeed } from './ws/clobFeed.js';
 import { DashboardServer } from './ws/dashboardServer.js';
 import { selectStrategy, shouldConsiderTailInsurance } from './strategies/strategySelector.js';
 import exitStrategy from './strategies/exitStrategy.js';
-import { generateLadderOrders, markLadderFilled, generateDCAOrders } from './strategies/ladder.js';
+import { generateLadderOrders, markLadderFilled, generateDCAOrders, LadderResult } from './strategies/ladder.js';
 import { generateVolatilityOrders } from './strategies/volatility.js';
 import { generateTailInsuranceOrder, markTailActive } from './strategies/tail.js';
 import { RiskManager } from './risk/riskManager.js';
@@ -290,10 +290,12 @@ class TradingBot {
                 timestamp: p.timestamp
             }));
 
+            // Pass priceNo for symmetric LATE_COMPRESSED detection
             const newRegime = classifyRegime(
                 timeToResolution,
                 update.priceYes,
-                priceHistory
+                priceHistory,
+                update.priceNo  // NEW: symmetric detection for strong NO markets
             );
 
             // Check for regime transition
@@ -308,18 +310,136 @@ class TradingBot {
 
             updatedState.regime = newRegime;
 
-            // 3. Select strategy
-            const strategy = selectStrategy(newRegime);
-
-            // 4. Generate proposed orders
+            // Get token IDs for this market
             const tokens = this.marketTokens.get(update.marketId);
             const tokenIdYes = tokens?.yes;
             const tokenIdNo = tokens?.no;
 
+            // --- EXIT CHECK (CRITICAL: runs FIRST, before any entry generation) ---
+            // If we have a position and exit is triggered, execute and return immediately
+            // This prevents buying then immediately selling in the same tick
+            const position = this.riskManager.getPosition(update.marketId);
+            if (position && tokenIdYes && tokenIdNo && !this.exitedMarkets.has(update.marketId)) {
+                const exitCheck = exitStrategy.shouldExit(
+                    position,
+                    update.priceYes,
+                    update.priceNo
+                );
+
+                if (exitCheck.shouldExit) {
+                    const exitOrder = exitStrategy.generateExitOrder(
+                        updatedState,
+                        position,
+                        tokenIdYes,
+                        tokenIdNo,
+                        exitCheck.reason
+                    );
+
+                    if (exitOrder) {
+                        // Log the exit
+                        if (exitCheck.isProfit) {
+                            logger.info('💰 TAKING PROFIT - Price > 90%', {
+                                marketId: update.marketId,
+                                reason: exitCheck.reason
+                            });
+                        } else {
+                            logger.info('🛑 STOP LOSS - Price < 65%', {
+                                marketId: update.marketId,
+                                reason: exitCheck.reason
+                            });
+                        }
+
+                        // Execute exit immediately
+                        const riskResult = this.riskManager.checkOrder(exitOrder);
+                        if (riskResult.approved) {
+                            const orderToExecute = riskResult.adjustedOrder || exitOrder;
+                            const order: Order = {
+                                marketId: orderToExecute.marketId,
+                                tokenId: orderToExecute.tokenId,
+                                side: orderToExecute.side,
+                                price: orderToExecute.price,
+                                sizeUsdc: orderToExecute.sizeUsdc,
+                                shares: orderToExecute.shares,
+                                strategy: orderToExecute.strategy,
+                                strategyDetail: orderToExecute.strategyDetail,
+                                isExit: true,
+                                timestamp: new Date()
+                            };
+
+                            const result = await this.executor.execute(order);
+
+                            if (result.success) {
+                                this.riskManager.recordExecution(orderToExecute, result.filledUsdc, result.filledShares);
+
+                                // Log strategy event
+                                await this.prisma.strategyEvent.create({
+                                    data: {
+                                        marketId: order.marketId,
+                                        regime: newRegime,
+                                        strategy: order.strategy,
+                                        action: 'EXIT_EXECUTED',
+                                        priceYes: update.priceYes,
+                                        priceNo: update.priceNo,
+                                        details: JSON.stringify({
+                                            side: order.side,
+                                            size: result.filledUsdc,
+                                            shares: result.filledShares,
+                                            reason: exitCheck.reason
+                                        })
+                                    }
+                                });
+
+                                // Cleanup after exit
+                                const remainingPos = this.riskManager.getPosition(order.marketId);
+                                if (!remainingPos || (remainingPos.sharesYes <= 0 && remainingPos.sharesNo <= 0)) {
+                                    logger.info('Position fully exited. Unsubscribing to free up slot.', {
+                                        marketId: order.marketId
+                                    });
+
+                                    // Unsubscribe from WebSocket
+                                    if (tokens) {
+                                        const tokenArray = [tokens.yes, tokens.no].filter(Boolean);
+                                        this.clobFeed.unsubscribe(order.marketId, tokenArray);
+                                    }
+
+                                    // Clear from local state maps
+                                    this.marketTokens.delete(order.marketId);
+                                    this.marketStates.delete(order.marketId);
+                                    if (tokens) {
+                                        if (tokens.yes) this.tokenToMarket.delete(tokens.yes);
+                                        if (tokens.no) this.tokenToMarket.delete(tokens.no);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Blacklist market and return - DO NOT proceed with entries
+                        this.exitedMarkets.add(update.marketId);
+                        this.processingLocks.delete(update.marketId);
+                        return;
+                    }
+                }
+            }
+
+            // Skip blacklisted markets entirely
+            if (this.exitedMarkets.has(update.marketId)) {
+                this.processingLocks.delete(update.marketId);
+                return;
+            }
+
+            // --- ENTRY GENERATION (only runs if exit check passed) ---
+
+            // 3. Select strategy
+            const strategy = selectStrategy(newRegime);
+
+            // 4. Generate proposed orders
             let proposedOrders: ProposedOrder[] = [];
 
             if (strategy === StrategyType.LADDER_COMPRESSION && tokenIdYes) {
-                proposedOrders = generateLadderOrders(updatedState, tokenIdYes, tokenIdNo);
+                const ladderResult = generateLadderOrders(updatedState, tokenIdYes, tokenIdNo);
+                proposedOrders = ladderResult.orders;
+                // Update touched levels in state for persistence
+                updatedState.ladderLevelTouched = ladderResult.updatedTouchedLevels;
             } else if (strategy === StrategyType.VOLATILITY_ABSORPTION && tokenIdYes && tokenIdNo) {
                 proposedOrders = generateVolatilityOrders(updatedState, tokenIdYes, tokenIdNo);
             }
@@ -370,52 +490,6 @@ class TradingBot {
                     market?.endDate  // Use endDate as game start
                 );
                 proposedOrders.push(...dcaOrders);
-            }
-
-            // 6. Check for exit conditions (price > 0.90 or price < 0.65)
-            const position = this.riskManager.getPosition(update.marketId);
-            if (position && tokenIdYes && tokenIdNo) {
-                // Skip if we've already exited this market (blacklisted)
-                if (this.exitedMarkets.has(update.marketId)) {
-                    proposedOrders = []; // Clear any orders for blacklisted market
-                } else {
-                    // Simple exit check: price > 0.90 (profit) or price < 0.65 (stop loss)
-                    const exitCheck = exitStrategy.shouldExit(
-                        position,
-                        update.priceYes,
-                        update.priceNo
-                    );
-
-                    if (exitCheck.shouldExit) {
-                        const exitOrder = exitStrategy.generateExitOrder(
-                            updatedState,
-                            position,
-                            tokenIdYes,
-                            tokenIdNo,
-                            exitCheck.reason // Pass the reason
-                        );
-
-                        if (exitOrder) {
-                            if (exitCheck.isProfit) {
-                                logger.info('💰 TAKING PROFIT - Price > 92%', {
-                                    marketId: update.marketId,
-                                    reason: exitCheck.reason
-                                });
-                            } else {
-                                logger.info('🛑 STOP LOSS - Price < 60%', {
-                                    marketId: update.marketId,
-                                    reason: exitCheck.reason
-                                });
-                            }
-
-                            // Add to blacklist - never re-enter this market
-                            this.exitedMarkets.add(update.marketId);
-
-                            // IMPORTANT: When exiting, only include the exit order
-                            proposedOrders = [exitOrder];
-                        }
-                    }
-                }
             }
 
             // 6. Apply risk checks and execute
@@ -619,6 +693,7 @@ class TradingBot {
             lastPriceNo: priceNo,
             priceHistory: [],
             ladderFilled: [],
+            ladderLevelTouched: {},  // Track when price first crosses each level
             exposureYes: 0,
             exposureNo: 0,
             tailActive: false,
@@ -730,6 +805,7 @@ class TradingBot {
                 lastPriceNo: priceNo,
                 priceHistory: [],
                 ladderFilled: JSON.parse(dbState.ladderFilled),
+                ladderLevelTouched: JSON.parse((dbState as any).ladderLevelTouched || '{}'),  // Parse from DB
                 activeTradeSide: dbState.activeTradeSide as 'YES' | 'NO' | undefined,
                 lockedTradeSide: (dbState as any).lockedTradeSide as 'YES' | 'NO' | undefined,  // PERMANENT side lock
                 exposureYes: 0,
@@ -771,6 +847,7 @@ class TradingBot {
             update: {
                 regime: state.regime,
                 ladderFilled: JSON.stringify(state.ladderFilled),
+                ladderLevelTouched: JSON.stringify(state.ladderLevelTouched),  // Persist hold-above state
                 activeTradeSide: state.activeTradeSide || null,
                 lockedTradeSide: state.lockedTradeSide || null,  // PERMANENT side lock
                 tailActive: state.tailActive,
@@ -780,6 +857,7 @@ class TradingBot {
                 marketId: state.marketId,
                 regime: state.regime,
                 ladderFilled: JSON.stringify(state.ladderFilled),
+                ladderLevelTouched: JSON.stringify(state.ladderLevelTouched),  // Persist hold-above state
                 activeTradeSide: state.activeTradeSide || null,
                 lockedTradeSide: state.lockedTradeSide || null,  // PERMANENT side lock
                 tailActive: state.tailActive,

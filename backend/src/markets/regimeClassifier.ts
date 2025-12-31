@@ -23,7 +23,7 @@ function calculateStdDev(prices: number[]): number {
  * Regime Classifier - Determines the trading regime for a market.
  * 
  * Classification rules:
- * 1. LATE_COMPRESSED: time < 6h AND price > 0.85
+ * 1. LATE_COMPRESSED: time < 6h AND max(priceYes, priceNo) > 0.85
  * 2. HIGH_VOLATILITY: stddev(price) > threshold
  * 3. EARLY_UNCERTAIN: price ∈ [0.45, 0.55]
  * 4. MID_CONSENSUS: default
@@ -31,15 +31,21 @@ function calculateStdDev(prices: number[]): number {
 export function classifyRegime(
     timeToResolutionMs: number,
     currentPriceYes: number,
-    priceHistory: PricePoint[]
+    priceHistory: PricePoint[],
+    currentPriceNo?: number  // Optional for symmetric detection
 ): MarketRegime {
     const config = configService.getAll();
     const lateResolutionMs = config.lateResolutionHours * 60 * 60 * 1000;
     const volatilityWindowMs = config.volatilityWindowMinutes * 60 * 1000;
 
+    // Use max of YES/NO for symmetric detection (strong NO markets count too)
+    // If priceNo not provided, assume 1 - priceYes for binary markets
+    const effectivePriceNo = currentPriceNo ?? (1 - currentPriceYes);
+    const maxPrice = Math.max(currentPriceYes, effectivePriceNo);
+
     // Check for LATE_COMPRESSED
     // Less than 6 hours to resolution AND price is highly compressed (>0.85)
-    if (timeToResolutionMs < lateResolutionMs && currentPriceYes > config.lateCompressedPriceThreshold) {
+    if (timeToResolutionMs < lateResolutionMs && maxPrice > config.lateCompressedPriceThreshold) {
         return MarketRegime.LATE_COMPRESSED;
     }
 

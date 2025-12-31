@@ -96,6 +96,7 @@ export interface MarketState {
     lastPriceNo: number;
     priceHistory: { price: number; timestamp: Date }[];
     ladderFilled: number[];
+    ladderLevelTouched: Record<number, number>;  // level -> timestamp (ms) when price first crossed
     activeTradeSide?: 'YES' | 'NO';    // Which side ladder levels are for (reset if switching)
     lockedTradeSide?: 'YES' | 'NO';    // PERMANENT: Once traded, never flip to opposite side
     exposureYes: number;
