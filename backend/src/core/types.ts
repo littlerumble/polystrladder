@@ -170,6 +170,7 @@ export interface Position {
     costBasisNo: number;
     unrealizedPnl: number;
     realizedPnl: number;
+    entryTime?: Date;  // When position was first opened (for hold time checks)
 }
 
 /**

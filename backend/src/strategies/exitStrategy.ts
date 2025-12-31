@@ -20,7 +20,11 @@ import { strategyLogger as logger } from '../core/logger.js';
 const TRAILING_ACTIVATION_PRICE = 0.90;  // Activate trailing stop above this
 const TRAILING_DISTANCE = 0.01;          // 1% trailing stop distance
 const SAFETY_CAP_PRICE = 0.98;           // Always exit at this price (safety)
-const STOP_LOSS_PRICE = 0.65;            // Stop loss threshold
+const STOP_LOSS_PRICE = 0.65;            // Default stop loss threshold
+const STOP_LOSS_PRICE_LOW_ENTRY = 0.62;  // Lower stop loss for entries at 0.65-0.70
+const LOW_ENTRY_MIN = 0.65;              // Entries from 65¢...
+const LOW_ENTRY_MAX = 0.70;              // ...to 70¢ get the lower stop loss
+const MIN_HOLD_SECONDS = 60;             // 1 minute minimum hold time before stop loss activates
 
 export interface ExitCheckResult {
     shouldExit: boolean;
@@ -70,12 +74,41 @@ export function shouldExit(
     }
 
     // 2. STOP LOSS - Exit if price drops below threshold
-    if (currentPrice < STOP_LOSS_PRICE) {
-        return {
-            shouldExit: true,
-            reason: `🛑 STOP LOSS: ${side} price ${(currentPrice * 100).toFixed(1)}% < ${STOP_LOSS_PRICE * 100}%`,
-            isProfit: false
-        };
+    // Dynamic stop loss: lower threshold (0.62) for entries at 0.65-0.70
+    // Minimum hold time: 1 minute before stop loss can trigger
+
+    // Determine entry price and stop loss threshold
+    const entryPrice = side === 'YES' ? position.avgEntryYes : position.avgEntryNo;
+    const isLowEntry = entryPrice !== undefined &&
+        entryPrice >= LOW_ENTRY_MIN &&
+        entryPrice <= LOW_ENTRY_MAX;
+    const stopLossThreshold = isLowEntry ? STOP_LOSS_PRICE_LOW_ENTRY : STOP_LOSS_PRICE;
+
+    // Check if we've held long enough for stop loss to activate
+    let holdTimeSeconds = 0;
+    if (position.entryTime) {
+        holdTimeSeconds = (Date.now() - position.entryTime.getTime()) / 1000;
+    }
+    const holdTimeExceeded = holdTimeSeconds >= MIN_HOLD_SECONDS;
+
+    if (currentPrice < stopLossThreshold) {
+        // Only trigger stop loss if minimum hold time has passed
+        if (holdTimeExceeded) {
+            return {
+                shouldExit: true,
+                reason: `🛑 STOP LOSS: ${side} price ${(currentPrice * 100).toFixed(1)}% < ${(stopLossThreshold * 100).toFixed(0)}% (entry: ${entryPrice ? (entryPrice * 100).toFixed(1) : '?'}%, held: ${holdTimeSeconds.toFixed(0)}s)`,
+                isProfit: false
+            };
+        } else {
+            // Price is below threshold but we haven't held long enough
+            logger.debug('Stop loss price hit but hold time not met', {
+                marketId: state?.marketId,
+                currentPrice: (currentPrice * 100).toFixed(1) + '%',
+                stopLossThreshold: (stopLossThreshold * 100).toFixed(1) + '%',
+                holdTimeSeconds: holdTimeSeconds.toFixed(0),
+                minHoldSeconds: MIN_HOLD_SECONDS
+            });
+        }
     }
 
     // 3. TRAILING STOP LOGIC (requires state)

@@ -34,6 +34,12 @@ export class RiskManager {
         // Load existing positions
         const dbPositions = await this.prisma.position.findMany();
         for (const pos of dbPositions) {
+            // Fetch entry time from MarketTrade table
+            const marketTrade = await this.prisma.marketTrade.findFirst({
+                where: { marketId: pos.marketId, status: 'OPEN' },
+                orderBy: { entryTime: 'asc' }
+            });
+
             this.positions.set(pos.marketId, {
                 marketId: pos.marketId,
                 sharesYes: pos.sharesYes,
@@ -43,7 +49,8 @@ export class RiskManager {
                 costBasisYes: pos.costBasisYes,
                 costBasisNo: pos.costBasisNo,
                 unrealizedPnl: pos.unrealizedPnl,
-                realizedPnl: pos.realizedPnl
+                realizedPnl: pos.realizedPnl,
+                entryTime: marketTrade?.entryTime ?? undefined
             });
         }
 
@@ -235,7 +242,8 @@ export class RiskManager {
                 costBasisYes: 0,
                 costBasisNo: 0,
                 unrealizedPnl: 0,
-                realizedPnl: 0
+                realizedPnl: 0,
+                entryTime: new Date()  // Set entry time on first buy
             };
         }
 
