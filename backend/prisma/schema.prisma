@@ -11,16 +11,16 @@ datasource db {
 // Market metadata from Polymarket
 model Market {
   id              String    @id
-  question        String
-  description     String?
+  question        String    @db.Text
+  description     String?   @db.Text
   category        String
   subcategory     String?
   endDate         DateTime
   gameStartTime   DateTime? // When the match/event actually starts
   volume24h       Float     @default(0)
   liquidity       Float     @default(0)
-  outcomes        String    // JSON array of outcomes
-  clobTokenIds    String    // JSON array of token IDs
+  outcomes        String    @db.Text // JSON array of outcomes
+  clobTokenIds    String    @db.Text // JSON array of token IDs
   active          Boolean   @default(true)
   closed          Boolean   @default(false)
   createdAt       DateTime  @default(now())

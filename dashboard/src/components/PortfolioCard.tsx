@@ -30,16 +30,11 @@ export default function PortfolioCard(props: PortfolioCardProps) {
 
     if (!portfolio) return null;
 
-    // Strict P&L Calculation per user request
-    // Unrealized = Sum of Active Trades only
-    const unrealizedPnl = activeTrades.length > 0
-        ? activeTrades.reduce((sum, t) => sum + t.unrealizedPnl, 0)
-        : portfolio.unrealizedPnl; // Fallback
-
-    // Realized = Sum of Closed Trades only
-    const realizedPnl = closedTrades.length > 0
-        ? closedTrades.reduce((sum, t) => sum + t.profitLoss, 0)
-        : portfolio.realizedPnl; // Fallback
+    // Use pre-computed values from backend (source of truth: MarketTrade table)
+    // Unrealized PnL = aggregated from OPEN trades in MarketTrade
+    // Realized PnL = aggregated from CLOSED trades in MarketTrade
+    const unrealizedPnl = portfolio.unrealizedPnl;
+    const realizedPnl = portfolio.realizedPnl;
 
     const totalPnl = unrealizedPnl + realizedPnl;
     const pnlPositive = totalPnl >= 0;
