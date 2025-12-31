@@ -93,7 +93,7 @@ export default function MarketScanner({ markets, marketStates }: MarketScannerPr
                             </div>
                             <div className="col-price">
                                 <span className="price-badge" style={{
-                                    color: market.priceYes && market.priceYes >= 0.60
+                                    color: market.priceYes && market.priceYes >= 0.65
                                         ? 'var(--accent-green)'
                                         : 'var(--text-muted)'
                                 }}>

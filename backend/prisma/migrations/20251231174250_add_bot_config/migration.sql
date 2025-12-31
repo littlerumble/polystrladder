@@ -1,0 +1,7 @@
+-- CreateTable
+CREATE TABLE "BotConfig" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT DEFAULT 1,
+    "bankroll" REAL NOT NULL DEFAULT 1000,
+    "lockedProfits" REAL NOT NULL DEFAULT 0,
+    "updatedAt" DATETIME NOT NULL
+);

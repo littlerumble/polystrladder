@@ -4,8 +4,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./bot.db"
+  provider = "mysql"
+  url      = env("DATABASE_URL")
 }
 
 // Market metadata from Polymarket
@@ -31,6 +31,47 @@ model Market {
   strategyEvents  StrategyEvent[]
   priceHistory    PriceHistory[]
   marketStates    MarketState[]
+  marketTrades    MarketTrade[]
+}
+
+// Complete trade lifecycle tracking for P&L
+model MarketTrade {
+  id              Int       @id @default(autoincrement())
+  marketId        String
+  market          Market    @relation(fields: [marketId], references: [id])
+  
+  // Position info
+  side            String    // 'YES' or 'NO'
+  status          String    @default("OPEN")  // 'OPEN' or 'CLOSED'
+  
+  // Entry details
+  entryPrice      Float     // Weighted avg entry price
+  entryShares     Float     // Total shares bought
+  entryAmount     Float     // Total $ invested (cost basis)
+  entryTime       DateTime  // First entry timestamp
+  
+  // Exit details (null if still open)
+  exitPrice       Float?    // Weighted avg exit price
+  exitShares      Float?    // Total shares sold
+  exitAmount      Float?    // Total $ received on exit
+  exitTime        DateTime? // Full exit timestamp
+  exitReason      String?   // Why we exited (e.g. "STOP LOSS: Price 0.43 < 0.65")
+
+  
+  // P&L metrics
+  profitLoss      Float     @default(0)  // $ profit or loss (realized)
+  profitLossPct   Float     @default(0)  // % return
+  
+  // Current state (for open positions)
+  currentShares   Float     @default(0)  // Remaining shares
+  currentPrice    Float?    // Latest market price
+  unrealizedPnl   Float     @default(0)  // Current unrealized P&L
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([marketId])
+  @@index([status])
 }
 
 // Individual trades executed by the bot
@@ -38,12 +79,13 @@ model Trade {
   id              Int      @id @default(autoincrement())
   marketId        String
   market          Market   @relation(fields: [marketId], references: [id])
-  side            String   // YES or NO
+  side            String   // YES or NO (Asset)
+  action          String   @default("BUY") // BUY or SELL
   price           Float
   size            Float    // USDC amount
   shares          Float    // Number of shares
   strategy        String   // LADDER_COMPRESSION, VOLATILITY_ABSORPTION, TAIL_INSURANCE
-  strategyDetail  String?  // e.g., ladder level
+  strategyDetail  String?  // e.g., ladder level or exit reason
   status          String   @default("FILLED") // FILLED, PENDING, REJECTED
   timestamp       DateTime @default(now())
 }
@@ -115,8 +157,16 @@ model MarketState {
   activeTradeSide       String?   // 'YES' or 'NO' - which side ladder is tracking (reset if switching)
   lockedTradeSide       String?   // 'YES' or 'NO' - once set, bot will NEVER trade opposite side
   tailActive            Boolean   @default(false)
-  stopLossTriggeredAt   DateTime? // When pre-game stop loss was triggered (price < 60%)
+  stopLossTriggeredAt   DateTime? // When pre-game stop loss was triggered (price < 65%)
   cooldownUntil         DateTime? // When re-entry is allowed (stopLoss + 10 min)
   lastProcessed         DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
+}
+
+// Bot configuration stored in DB (source of truth for dashboard)
+model BotConfig {
+  id              Int      @id @default(1)  // Single row
+  bankroll        Float    @default(1000)   // Initial capital
+  lockedProfits   Float    @default(0)      // Realized profits locked away (never reinvested)
+  updatedAt       DateTime @updatedAt
 }

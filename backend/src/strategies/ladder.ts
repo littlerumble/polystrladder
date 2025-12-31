@@ -42,8 +42,8 @@ export function generateLadderOrders(
     const maxExposure = config.bankroll * config.maxMarketExposurePct;
     const priceYes = state.lastPriceYes;
     const priceNo = state.lastPriceNo;
-    const maxBuyPrice = config.maxBuyPrice || 0.92;
-    const firstLadder = ladderLevels[0] || 0.60;
+    const maxBuyPrice = config.maxBuyPrice || 0.90;
+    const firstLadder = ladderLevels[0] || 0.65;
 
     // DEBUG: Log every ladder call with sweet-spot prices
     if ((priceYes >= 0.55 && priceYes <= 0.95) || (priceNo >= 0.55 && priceNo <= 0.95)) {
@@ -298,7 +298,7 @@ export function generateDCAOrders(
 
     // CRITICAL: Only DCA if price is ABOVE first ladder level (60%)
     const ladderConfig = configService.getAll();
-    const firstLadderLevel = ladderConfig.ladderLevels[0] || 0.60;
+    const firstLadderLevel = ladderConfig.ladderLevels[0] || 0.65;
     if (currentPrice < firstLadderLevel) {
         logger.debug('DCA blocked - price below first ladder (thesis breaking)', {
             marketId: state.marketId,

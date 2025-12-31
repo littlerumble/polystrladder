@@ -8,11 +8,11 @@ import PortfolioCard from './components/PortfolioCard';
 import MarketScanner from './components/MarketScanner';
 import Positions from './components/Positions';
 import TradeHistory from './components/TradeHistory';
-import PnLChart from './components/PnLChart';
 import StrategyEvents from './components/StrategyEvents';
 import DecisionPanel from './components/DecisionPanel';
+import MarketTradesPanel from './components/MarketTradesPanel';
 
-type TabType = 'scanner' | 'positions' | 'trades' | 'strategy';
+type TabType = 'scanner' | 'positions' | 'trades' | 'm-trades' | 'strategy';
 
 function App() {
     const [activeTab, setActiveTab] = useState<TabType>('scanner');
@@ -50,6 +50,8 @@ function App() {
                     <PortfolioCard
                         portfolio={api.portfolio}
                         positions={api.positions}
+                        activeTrades={api.activeTrades}
+                        closedTrades={api.closedTrades}
                     />
                 </section>
 
@@ -59,11 +61,6 @@ function App() {
                         positions={api.positions}
                         marketStates={api.marketStates}
                     />
-                </section>
-
-                {/* P&L Chart */}
-                <section className="chart-section animate-slide-up" style={{ animationDelay: '0.1s' }}>
-                    <PnLChart data={api.pnlHistory} />
                 </section>
 
                 {/* Tab Navigation */}
@@ -83,10 +80,17 @@ function App() {
                         <span className="badge">{api.positions.length}</span>
                     </button>
                     <button
+                        className={`tab-btn ${activeTab === 'm-trades' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('m-trades')}
+                    >
+                        Market Trades
+                        <span className="badge">{api.activeTrades.length + api.closedTrades.length}</span>
+                    </button>
+                    <button
                         className={`tab-btn ${activeTab === 'trades' ? 'active' : ''}`}
                         onClick={() => setActiveTab('trades')}
                     >
-                        Trade History
+                        Order History
                         <span className="badge">{api.trades.length}</span>
                     </button>
                     <button
@@ -108,6 +112,12 @@ function App() {
                     )}
                     {activeTab === 'positions' && (
                         <Positions positions={api.positions} />
+                    )}
+                    {activeTab === 'm-trades' && (
+                        <MarketTradesPanel
+                            activeTrades={api.activeTrades}
+                            closedTrades={api.closedTrades}
+                        />
                     )}
                     {activeTab === 'trades' && (
                         <TradeHistory trades={api.trades} />

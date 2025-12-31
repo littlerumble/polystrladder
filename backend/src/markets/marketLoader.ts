@@ -301,7 +301,7 @@ export class MarketLoader {
         let filteredMarkets = this.filterMarkets(rawMarkets);
 
         // Calculate profit score for each market and select the top N
-        const topN = configService.get('topNMarkets') || 10;
+        const topN = configService.get('topNMarkets') || 50;
 
         // Score and sort markets by profit potential
         const scoredMarkets = filteredMarkets.map(market => {

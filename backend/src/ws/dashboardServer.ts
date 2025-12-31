@@ -296,9 +296,9 @@ export class DashboardServer {
                 });
 
                 // Get ladder config for entry cues
-                const ladderLevels: number[] = configService.get('ladderLevels') || [0.60, 0.70, 0.80, 0.90, 0.95];
+                const ladderLevels: number[] = configService.get('ladderLevels') || [0.65, 0.70, 0.80, 0.90, 0.95];
                 const firstLadder = ladderLevels[0];
-                const maxBuyPrice = configService.get('maxBuyPrice') || 0.92;
+                const maxBuyPrice = configService.get('maxBuyPrice') || 0.90;
 
                 // Enrich with live prices and entry cues
                 const enrichedMarkets = await Promise.all(markets.map(async (market) => {
@@ -405,7 +405,7 @@ export class DashboardServer {
             }
         });
 
-        // Get trade history
+        // Get trade history (individual buy/sell orders)
         this.app.get('/api/trades', async (req, res) => {
             try {
                 const limit = parseInt(req.query.limit as string) || 100;
@@ -415,6 +415,130 @@ export class DashboardServer {
                     take: limit
                 });
                 res.json(trades);
+            } catch (error) {
+                res.status(500).json({ error: String(error) });
+            }
+        });
+
+        // Get active/open market trades with live unrealized P&L
+        this.app.get('/api/trades/active', async (_, res) => {
+            try {
+                const activeTrades = await this.prisma.marketTrade.findMany({
+                    where: { status: 'OPEN' },
+                    include: { market: true },
+                    orderBy: { entryTime: 'desc' }
+                });
+
+                // Enrich with live prices and unrealized P&L
+                const enriched = await Promise.all(activeTrades.map(async (trade) => {
+                    let currentPrice = trade.currentPrice || 0;
+                    let unrealizedPnl = 0;
+
+                    if (trade.market) {
+                        const livePrice = await this.fetchLivePrice(trade.market);
+                        if (livePrice) {
+                            currentPrice = trade.side === 'YES' ? livePrice.priceYes : livePrice.priceNo;
+                            const currentValue = trade.currentShares * currentPrice;
+                            const remainingCostBasis = trade.entryAmount * (trade.currentShares / trade.entryShares);
+                            unrealizedPnl = currentValue - remainingCostBasis;
+                        }
+                    }
+
+                    const unrealizedPct = trade.entryAmount > 0
+                        ? (unrealizedPnl / trade.entryAmount) * 100
+                        : 0;
+
+                    return {
+                        ...trade,
+                        currentPrice,
+                        unrealizedPnl,
+                        unrealizedPct,
+                        marketQuestion: trade.market?.question
+                    };
+                }));
+
+                res.json(enriched);
+            } catch (error) {
+                res.status(500).json({ error: String(error) });
+            }
+        });
+
+        // Get closed market trades with final P&L
+        this.app.get('/api/trades/closed', async (req, res) => {
+            try {
+                const limit = parseInt(req.query.limit as string) || 100;
+                const closedTrades = await this.prisma.marketTrade.findMany({
+                    where: { status: 'CLOSED' },
+                    include: { market: true },
+                    orderBy: { exitTime: 'desc' },
+                    take: limit
+                });
+
+                const enriched = closedTrades.map(trade => ({
+                    ...trade,
+                    marketQuestion: trade.market?.question,
+                    isWin: trade.profitLoss > 0,
+                    holdTime: trade.exitTime && trade.entryTime
+                        ? Math.round((trade.exitTime.getTime() - trade.entryTime.getTime()) / (1000 * 60))
+                        : null  // Hold time in minutes
+                }));
+
+                res.json(enriched);
+            } catch (error) {
+                res.status(500).json({ error: String(error) });
+            }
+        });
+
+        // Get trade summary/statistics
+        this.app.get('/api/trades/summary', async (_, res) => {
+            try {
+                const [openTrades, closedTrades] = await Promise.all([
+                    this.prisma.marketTrade.findMany({ where: { status: 'OPEN' } }),
+                    this.prisma.marketTrade.findMany({ where: { status: 'CLOSED' } })
+                ]);
+
+                // Calculate open positions stats
+                const totalInvested = openTrades.reduce((sum, t) => sum + t.entryAmount, 0);
+                const activeCount = openTrades.length;
+
+                // Calculate closed trades stats
+                const wins = closedTrades.filter(t => t.profitLoss > 0);
+                const losses = closedTrades.filter(t => t.profitLoss <= 0);
+                const totalRealized = closedTrades.reduce((sum, t) => sum + t.profitLoss, 0);
+                const avgWin = wins.length > 0
+                    ? wins.reduce((sum, t) => sum + t.profitLoss, 0) / wins.length
+                    : 0;
+                const avgLoss = losses.length > 0
+                    ? losses.reduce((sum, t) => sum + t.profitLoss, 0) / losses.length
+                    : 0;
+                const winRate = closedTrades.length > 0
+                    ? (wins.length / closedTrades.length) * 100
+                    : 0;
+                const totalTurnover = closedTrades.reduce((sum, t) => sum + t.entryAmount, 0);
+                const returnOnInvestment = totalTurnover > 0
+                    ? (totalRealized / totalTurnover) * 100
+                    : 0;
+
+                res.json({
+                    // Active positions
+                    activeCount,
+                    totalInvested,
+
+                    // Closed trades
+                    closedCount: closedTrades.length,
+                    winCount: wins.length,
+                    lossCount: losses.length,
+                    winRate,
+
+                    // P&L
+                    totalRealized,
+                    avgWin,
+                    avgLoss,
+
+                    // Returns
+                    totalTurnover,
+                    returnOnInvestment
+                });
             } catch (error) {
                 res.status(500).json({ error: String(error) });
             }
@@ -449,52 +573,105 @@ export class DashboardServer {
             }
         });
 
-        // Get portfolio summary with detailed capital breakdown and live P&L
+        // Get portfolio summary - ALL VALUES FROM DATABASE
         this.app.get('/api/portfolio', async (_, res) => {
             try {
-                // Fetch positions with LIVE P&L (Shared Logic)
-                // And snapshot for locked profits
-                const [enrichedPositions, latestPnl] = await Promise.all([
-                    this.getPositionsWithLivePnl(),
-                    this.prisma.pnlSnapshot.findFirst({ orderBy: { timestamp: 'desc' } })
+                // Fetch all data from database (single source of truth)
+                const [openTrades, closedTrades, botConfig] = await Promise.all([
+                    this.prisma.marketTrade.findMany({
+                        where: { status: 'OPEN' },
+                        include: { market: true }
+                    }),
+                    this.prisma.marketTrade.findMany({
+                        where: { status: 'CLOSED' }
+                    }),
+                    this.prisma.botConfig.findFirst()  // Get bankroll from DB
                 ]);
 
-                // Calculate Totals using the Enriched Positions
-                let totalCostBasis = 0;
-                let totalRealizedPnl = 0;
+                // Initialize BotConfig if doesn't exist (first run)
+                let bankroll = botConfig?.bankroll ?? configService.get('bankroll') as number;
+                if (!botConfig) {
+                    await this.prisma.botConfig.create({
+                        data: {
+                            id: 1,
+                            bankroll: configService.get('bankroll') as number,
+                            lockedProfits: 0
+                        }
+                    });
+                }
+
+                // Calculate open positions values with live prices
+                let totalInvested = 0;  // Total cost basis in open positions
                 let totalUnrealizedPnl = 0;
                 let totalPositionsValue = 0;
 
-                for (const pos of enrichedPositions) {
-                    const cost = pos.costBasisYes + pos.costBasisNo;
-                    totalCostBasis += cost;
-                    totalRealizedPnl += pos.realizedPnl;
-                    totalUnrealizedPnl += pos.unrealizedPnl;
+                for (const trade of openTrades) {
+                    totalInvested += trade.entryAmount;
 
-                    // Value = Cost + Unrealized
-                    totalPositionsValue += (cost + pos.unrealizedPnl);
+                    // Get live unrealized P&L
+                    let unrealizedPnl = trade.unrealizedPnl;  // Use stored value
+
+                    // Try to get live price for more accuracy
+                    if (trade.market) {
+                        const livePrice = await this.fetchLivePrice(trade.market);
+                        if (livePrice) {
+                            const currentPrice = trade.side === 'YES' ? livePrice.priceYes : livePrice.priceNo;
+                            const currentValue = trade.currentShares * currentPrice;
+                            const remainingCostBasis = trade.entryAmount * (trade.currentShares / trade.entryShares);
+                            unrealizedPnl = currentValue - remainingCostBasis;
+                        }
+                    }
+
+                    totalUnrealizedPnl += unrealizedPnl;
+                    totalPositionsValue += (trade.entryAmount + unrealizedPnl);
                 }
 
-                // Locked Profits (from snapshot, managed by RiskManager)
-                const lockedProfits = latestPnl?.realizedPnl || 0;
+                // Calculate closed trades P&L (this IS the locked profits)
+                let totalRealizedPnl = 0;
+                let winCount = 0;
+                let lossCount = 0;
 
-                const bankroll = configService.get('bankroll') as number;
-                const tradeableCash = bankroll - totalCostBasis;
+                for (const trade of closedTrades) {
+                    totalRealizedPnl += trade.profitLoss;
+                    if (trade.profitLoss > 0) {
+                        winCount++;
+                    } else {
+                        lossCount++;
+                    }
+                }
+
+                // LOCKED PROFITS = realized P&L from closed trades (sum of MarketTrade.profitLoss)
+                // This value is calculated from DB, no memory involved
+                const lockedProfits = totalRealizedPnl > 0 ? totalRealizedPnl : 0;
+
+                // Tradeable cash = bankroll - money currently invested (not including locked profits)
+                const tradeableCash = bankroll - totalInvested;
 
                 res.json({
+                    // Core values
                     bankroll,
                     cashBalance: tradeableCash + lockedProfits,
                     tradeableCash,
-                    lockedProfits: lockedProfits > 0 ? lockedProfits : 0,
+                    lockedProfits,
                     positionsValue: totalPositionsValue,
                     totalValue: tradeableCash + lockedProfits + totalPositionsValue,
+
+                    // P&L (from MarketTrade)
                     unrealizedPnl: totalUnrealizedPnl,
                     realizedPnl: totalRealizedPnl,
-                    positionCount: enrichedPositions.length,
+
+                    // Position stats
+                    positionCount: openTrades.length,
+                    closedCount: closedTrades.length,
+                    winCount,
+                    lossCount,
+                    winRate: closedTrades.length > 0 ? (winCount / closedTrades.length) * 100 : 0,
+
+                    // Allocation percentages
                     allocation: {
-                        tradeableCashPct: bankroll > 0 ? (tradeableCash / (tradeableCash + totalCostBasis + (lockedProfits > 0 ? lockedProfits : 0))) * 100 : 100,
-                        positionsPct: bankroll > 0 ? (totalCostBasis / (tradeableCash + totalCostBasis + (lockedProfits > 0 ? lockedProfits : 0))) * 100 : 0,
-                        lockedProfitsPct: (lockedProfits > 0 && bankroll > 0) ? (lockedProfits / (tradeableCash + totalCostBasis + lockedProfits)) * 100 : 0
+                        tradeableCashPct: tradeableCash > 0 ? (tradeableCash / (tradeableCash + totalInvested + lockedProfits)) * 100 : 100,
+                        positionsPct: totalInvested > 0 ? (totalInvested / (tradeableCash + totalInvested + lockedProfits)) * 100 : 0,
+                        lockedProfitsPct: lockedProfits > 0 ? (lockedProfits / (tradeableCash + totalInvested + lockedProfits)) * 100 : 0
                     }
                 });
             } catch (error) {

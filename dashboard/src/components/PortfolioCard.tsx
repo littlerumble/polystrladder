@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { Portfolio, Position } from '../hooks/useApi';
+import { Portfolio, Position, ClosedTrade, ActiveTrade } from '../hooks/useApi';
 import './PortfolioCard.css';
 
 interface PortfolioCardProps {
     portfolio: Portfolio | null;
-    positions?: Position[];  // NEW: Pass positions for P&L breakdown
+    positions?: Position[];
+    activeTrades?: ActiveTrade[]; // NEW: Used for Unrealized P&L agg
+    closedTrades?: ClosedTrade[]; // NEW: Used for Realized P&L agg
 }
 
 function formatCurrency(value: number): string {
@@ -21,79 +23,40 @@ function formatPercent(value: number, base: number): string {
     return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
 }
 
-// Separate positions into gainers and losers
-function categorizePositions(positions: Position[]): {
-    gainers: Array<{ name: string; pnl: number; pct: number }>;
-    losers: Array<{ name: string; pnl: number; pct: number }>;
-} {
-    const gainers: Array<{ name: string; pnl: number; pct: number }> = [];
-    const losers: Array<{ name: string; pnl: number; pct: number }> = [];
-
-    for (const pos of positions) {
-        const costBasis = pos.costBasisYes + pos.costBasisNo;
-        const pct = costBasis > 0 ? (pos.unrealizedPnl / costBasis) * 100 : 0;
-        const name = pos.market?.question?.substring(0, 35) || pos.marketId.substring(0, 20);
-
-        if (pos.unrealizedPnl > 0) {
-            gainers.push({ name, pnl: pos.unrealizedPnl, pct });
-        } else if (pos.unrealizedPnl < 0) {
-            losers.push({ name, pnl: pos.unrealizedPnl, pct });
-        }
-    }
-
-    // Sort by magnitude
-    gainers.sort((a, b) => b.pnl - a.pnl);
-    losers.sort((a, b) => a.pnl - b.pnl);
-
-    return { gainers, losers };
-}
-
-// Get realized P&L contributors
-function getRealizedBreakdown(positions: Position[]): {
-    profits: Array<{ name: string; pnl: number }>;
-    losses: Array<{ name: string; pnl: number }>;
-} {
-    const profits: Array<{ name: string; pnl: number }> = [];
-    const losses: Array<{ name: string; pnl: number }> = [];
-
-    for (const pos of positions) {
-        if (pos.realizedPnl === 0) continue;
-        const name = pos.market?.question?.substring(0, 35) || pos.marketId.substring(0, 20);
-
-        if (pos.realizedPnl > 0) {
-            profits.push({ name, pnl: pos.realizedPnl });
-        } else {
-            losses.push({ name, pnl: pos.realizedPnl });
-        }
-    }
-
-    profits.sort((a, b) => b.pnl - a.pnl);
-    losses.sort((a, b) => a.pnl - b.pnl);
-
-    return { profits, losses };
-}
-
-export default function PortfolioCard({ portfolio, positions = [] }: PortfolioCardProps) {
+export default function PortfolioCard(props: PortfolioCardProps) {
+    const { portfolio, activeTrades = [], closedTrades = [] } = props;
     const [showUnrealizedTooltip, setShowUnrealizedTooltip] = useState(false);
     const [showRealizedTooltip, setShowRealizedTooltip] = useState(false);
 
     if (!portfolio) return null;
 
-    const totalPnl = portfolio.unrealizedPnl + portfolio.realizedPnl;
+    // Strict P&L Calculation per user request
+    // Unrealized = Sum of Active Trades only
+    const unrealizedPnl = activeTrades.length > 0
+        ? activeTrades.reduce((sum, t) => sum + t.unrealizedPnl, 0)
+        : portfolio.unrealizedPnl; // Fallback
+
+    // Realized = Sum of Closed Trades only
+    const realizedPnl = closedTrades.length > 0
+        ? closedTrades.reduce((sum, t) => sum + t.profitLoss, 0)
+        : portfolio.realizedPnl; // Fallback
+
+    const totalPnl = unrealizedPnl + realizedPnl;
     const pnlPositive = totalPnl >= 0;
 
     // Use new fields with fallbacks for backward compatibility
     const tradeableCash = portfolio.tradeableCash ?? portfolio.cashBalance;
     const lockedProfits = portfolio.lockedProfits ?? 0;
-    const allocation = portfolio.allocation ?? {
-        tradeableCashPct: 100,
-        positionsPct: 0,
-        lockedProfitsPct: 0
-    };
+    // const allocation = portfolio.allocation... (unused here)
 
     // Get P&L breakdowns
-    const { gainers, losers } = categorizePositions(positions);
-    const { profits: realizedProfits, losses: realizedLosses } = getRealizedBreakdown(positions);
+    // For Unrealized: Use activeTrades
+    const gainers = activeTrades.filter(t => t.unrealizedPnl > 0).sort((a, b) => b.unrealizedPnl - a.unrealizedPnl);
+    const losers = activeTrades.filter(t => t.unrealizedPnl < 0).sort((a, b) => a.unrealizedPnl - b.unrealizedPnl);
+
+    // For Realized: Use closedTrades
+    const realizedProfits = closedTrades.filter(t => t.profitLoss > 0).sort((a, b) => b.profitLoss - a.profitLoss);
+    const realizedLosses = closedTrades.filter(t => t.profitLoss < 0).sort((a, b) => a.profitLoss - b.profitLoss);
 
     return (
         <>
@@ -137,13 +100,13 @@ export default function PortfolioCard({ portfolio, positions = [] }: PortfolioCa
 
             {/* Unrealized P&L - With hover breakdown */}
             <div
-                className={`stat-card hoverable ${portfolio.unrealizedPnl >= 0 ? 'profit' : 'loss'}`}
+                className={`stat-card hoverable ${unrealizedPnl >= 0 ? 'profit' : 'loss'}`}
                 onMouseEnter={() => setShowUnrealizedTooltip(true)}
                 onMouseLeave={() => setShowUnrealizedTooltip(false)}
             >
                 <div className="stat-label">📈 Unrealized P&L</div>
-                <div className={`stat-value ${portfolio.unrealizedPnl >= 0 ? 'positive' : 'negative'}`}>
-                    {portfolio.unrealizedPnl >= 0 ? '+' : ''}{formatCurrency(portfolio.unrealizedPnl)}
+                <div className={`stat-value ${unrealizedPnl >= 0 ? 'positive' : 'negative'}`}>
+                    {unrealizedPnl >= 0 ? '+' : ''}{formatCurrency(unrealizedPnl)}
                 </div>
                 <div className="stat-sublabel">
                     <span className="mini-stat positive">↑{gainers.length} Up</span>
@@ -151,7 +114,7 @@ export default function PortfolioCard({ portfolio, positions = [] }: PortfolioCa
                 </div>
 
                 {/* Tooltip showing breakdown */}
-                {showUnrealizedTooltip && (positions.length > 0) && (
+                {showUnrealizedTooltip && (activeTrades.length > 0) && (
                     <div className="pnl-tooltip">
                         <div className="tooltip-header">Unrealized P&L Breakdown</div>
 
@@ -160,9 +123,11 @@ export default function PortfolioCard({ portfolio, positions = [] }: PortfolioCa
                                 <div className="section-title">📈 Gainers</div>
                                 {gainers.slice(0, 5).map((g, i) => (
                                     <div key={i} className="tooltip-row">
-                                        <span className="tooltip-name">{g.name}...</span>
+                                        <span className="tooltip-name">
+                                            {g.marketQuestion?.substring(0, 35) || g.marketId.substring(0, 12)}...
+                                        </span>
                                         <span className="tooltip-value positive">
-                                            +{formatCurrency(g.pnl)} ({g.pct.toFixed(1)}%)
+                                            +{formatCurrency(g.unrealizedPnl)} ({g.unrealizedPct.toFixed(1)}%)
                                         </span>
                                     </div>
                                 ))}
@@ -177,9 +142,11 @@ export default function PortfolioCard({ portfolio, positions = [] }: PortfolioCa
                                 <div className="section-title">📉 Losers</div>
                                 {losers.slice(0, 5).map((l, i) => (
                                     <div key={i} className="tooltip-row">
-                                        <span className="tooltip-name">{l.name}...</span>
+                                        <span className="tooltip-name">
+                                            {l.marketQuestion?.substring(0, 35) || l.marketId.substring(0, 12)}...
+                                        </span>
                                         <span className="tooltip-value negative">
-                                            {formatCurrency(l.pnl)} ({l.pct.toFixed(1)}%)
+                                            {formatCurrency(l.unrealizedPnl)} ({l.unrealizedPct.toFixed(1)}%)
                                         </span>
                                     </div>
                                 ))}
@@ -188,23 +155,19 @@ export default function PortfolioCard({ portfolio, positions = [] }: PortfolioCa
                                 )}
                             </div>
                         )}
-
-                        {positions.length === 0 && (
-                            <div className="tooltip-empty">No positions</div>
-                        )}
                     </div>
                 )}
             </div>
 
             {/* Realized P&L - With hover breakdown */}
             <div
-                className={`stat-card hoverable ${portfolio.realizedPnl >= 0 ? 'profit' : 'loss'}`}
+                className={`stat-card hoverable ${realizedPnl >= 0 ? 'profit' : 'loss'}`}
                 onMouseEnter={() => setShowRealizedTooltip(true)}
                 onMouseLeave={() => setShowRealizedTooltip(false)}
             >
                 <div className="stat-label">✅ Realized P&L</div>
-                <div className={`stat-value ${portfolio.realizedPnl >= 0 ? 'positive' : 'negative'}`}>
-                    {portfolio.realizedPnl >= 0 ? '+' : ''}{formatCurrency(portfolio.realizedPnl)}
+                <div className={`stat-value ${realizedPnl >= 0 ? 'positive' : 'negative'}`}>
+                    {realizedPnl >= 0 ? '+' : ''}{formatCurrency(realizedPnl)}
                 </div>
                 <div className="stat-sublabel">
                     <span className="mini-stat positive">↑{realizedProfits.length} Winners</span>
@@ -221,9 +184,11 @@ export default function PortfolioCard({ portfolio, positions = [] }: PortfolioCa
                                 <div className="section-title">💰 Profitable Trades</div>
                                 {realizedProfits.slice(0, 5).map((p, i) => (
                                     <div key={i} className="tooltip-row">
-                                        <span className="tooltip-name">{p.name}...</span>
+                                        <span className="tooltip-name">
+                                            {p.marketQuestion?.substring(0, 35) || p.marketId.substring(0, 12)}...
+                                        </span>
                                         <span className="tooltip-value positive">
-                                            +{formatCurrency(p.pnl)}
+                                            +{formatCurrency(p.profitLoss)}
                                         </span>
                                     </div>
                                 ))}
@@ -238,9 +203,11 @@ export default function PortfolioCard({ portfolio, positions = [] }: PortfolioCa
                                 <div className="section-title">📉 Losing Trades</div>
                                 {realizedLosses.slice(0, 5).map((l, i) => (
                                     <div key={i} className="tooltip-row">
-                                        <span className="tooltip-name">{l.name}...</span>
+                                        <span className="tooltip-name">
+                                            {l.marketQuestion?.substring(0, 35) || l.marketId.substring(0, 12)}...
+                                        </span>
                                         <span className="tooltip-value negative">
-                                            {formatCurrency(l.pnl)}
+                                            {formatCurrency(l.profitLoss)}
                                         </span>
                                     </div>
                                 ))}
@@ -251,42 +218,6 @@ export default function PortfolioCard({ portfolio, positions = [] }: PortfolioCa
                         )}
                     </div>
                 )}
-            </div>
-
-            {/* Capital Allocation Breakdown - Full Width */}
-            <div className="stat-card capital-breakdown full-width">
-                <div className="stat-label">📊 Capital Allocation</div>
-                <div className="allocation-bar">
-                    <div
-                        className="allocation-segment cash"
-                        style={{ width: `${allocation.tradeableCashPct}%` }}
-                        title={`Cash Reserve: ${allocation.tradeableCashPct.toFixed(1)}%`}
-                    ></div>
-                    <div
-                        className="allocation-segment positions"
-                        style={{ width: `${allocation.positionsPct}%` }}
-                        title={`Positions: ${allocation.positionsPct.toFixed(1)}%`}
-                    ></div>
-                    <div
-                        className="allocation-segment locked"
-                        style={{ width: `${allocation.lockedProfitsPct}%` }}
-                        title={`Locked Profits: ${allocation.lockedProfitsPct.toFixed(1)}%`}
-                    ></div>
-                </div>
-                <div className="allocation-legend">
-                    <span className="legend-item">
-                        <span className="legend-color cash"></span>
-                        Cash ({allocation.tradeableCashPct.toFixed(0)}%)
-                    </span>
-                    <span className="legend-item">
-                        <span className="legend-color positions"></span>
-                        Positions ({allocation.positionsPct.toFixed(0)}%)
-                    </span>
-                    <span className="legend-item">
-                        <span className="legend-color locked"></span>
-                        Locked ({allocation.lockedProfitsPct.toFixed(0)}%)
-                    </span>
-                </div>
             </div>
         </>
     );

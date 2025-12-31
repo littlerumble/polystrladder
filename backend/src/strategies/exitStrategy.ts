@@ -4,15 +4,15 @@ import { strategyLogger as logger } from '../core/logger.js';
 /**
  * Exit Strategy - Simple Price-Based Exit
  * 
- * TAKE PROFIT: Exit 100% if price > 0.92
- * STOP LOSS: Exit 100% if price < 0.60
+ * TAKE PROFIT: Exit 100% if price > 0.90
+ * STOP LOSS: Exit 100% if price < 0.65
  * 
  * No partial exits, no moon bags. All or nothing.
  */
 
 // Exit thresholds
-const TAKE_PROFIT_PRICE = 0.92;
-const STOP_LOSS_PRICE = 0.60;
+const TAKE_PROFIT_PRICE = 0.90;
+const STOP_LOSS_PRICE = 0.65;
 
 export interface ExitCheckResult {
     shouldExit: boolean;
@@ -24,8 +24,8 @@ export interface ExitCheckResult {
  * Check if a position should be exited based on price thresholds.
  * 
  * Exit if:
- * - Price > 0.92 (take profit)
- * - Price < 0.60 (stop loss)
+ * - Price > 0.90 (take profit)
+ * - Price < 0.65 (stop loss)
  */
 export function shouldExit(
     position: Position,
@@ -78,7 +78,8 @@ export function generateExitOrder(
     state: MarketState,
     position: Position,
     tokenIdYes: string,
-    tokenIdNo: string
+    tokenIdNo: string,
+    reason: string = 'full_exit' // New parameter
 ): ProposedOrder | null {
     let side: Side;
     let tokenId: string;
@@ -109,7 +110,7 @@ export function generateExitOrder(
         sizeUsdc,
         shares: shares,
         strategy: StrategyType.PROFIT_TAKING,
-        strategyDetail: 'full_exit',
+        strategyDetail: reason, // Use the passed reason
         confidence: 1.0,
         isExit: true
     };
@@ -121,6 +122,7 @@ export function generateExitOrder(
         priceYes: state.lastPriceYes,
         priceNo: state.lastPriceNo,
         details: {
+            reason,
             side,
             sharesToSell: shares.toFixed(4),
             sizeUsdc: sizeUsdc.toFixed(2)

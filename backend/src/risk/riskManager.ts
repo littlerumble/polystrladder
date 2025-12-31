@@ -107,7 +107,7 @@ export class RiskManager {
 
         // 0. Check position limit for NEW markets
         const existingPosition = this.positions.get(order.marketId);
-        const maxPositions = config.maxActivePositions || 6;
+        const maxPositions = config.maxActivePositions || 15;
         if (!existingPosition && this.positions.size >= maxPositions) {
             return {
                 approved: false,
@@ -154,17 +154,18 @@ export class RiskManager {
 
         // Calculate progressive exposure limit based on current price
         // Higher price = more conviction = more allowed exposure
+        // INCREASED: Allow more capital at ALL price levels for better deployment
         const price = order.price;
         let progressiveExposurePct: number;
 
         if (price >= 0.90) {
-            progressiveExposurePct = 1.0;  // 100% at 90¢+
+            progressiveExposurePct = 1.0;  // 100% at 90¢+ ($200)
         } else if (price >= 0.80) {
-            progressiveExposurePct = 0.80; // 80% at 80-90¢
+            progressiveExposurePct = 0.90; // 90% at 80-90¢ ($180)
         } else if (price >= 0.70) {
-            progressiveExposurePct = 0.25; // 25% at 70-80¢
+            progressiveExposurePct = 0.75; // 75% at 70-80¢ ($150)
         } else {
-            progressiveExposurePct = 0.10; // 10% at 60-70¢
+            progressiveExposurePct = 0.50; // 50% at 60-70¢ ($100)
         }
 
         // Max market exposure is bank's max exposure * progressive percentage
@@ -327,6 +328,141 @@ export class RiskManager {
             cashRemaining: this.cashBalance,
             protectedProfits: this.realizedProfitsBucket
         });
+
+        // Update MarketTrade table for comprehensive P&L tracking
+        this.updateMarketTrade(order, filledUsdc, filledShares, position).catch(err => {
+            logger.error('Failed to update MarketTrade', { error: String(err) });
+        });
+    }
+
+    /**
+     * Update MarketTrade table for comprehensive P&L tracking.
+     * Creates new trade on first buy, updates on subsequent buys, closes on full exit.
+     */
+    private async updateMarketTrade(
+        order: ProposedOrder,
+        filledUsdc: number,
+        filledShares: number,
+        position: Position | undefined
+    ): Promise<void> {
+        if (order.isExit) {
+            // SELL - Update existing MarketTrade with exit info
+            const existingTrade = await this.prisma.marketTrade.findFirst({
+                where: {
+                    marketId: order.marketId,
+                    side: order.side,
+                    status: 'OPEN'
+                }
+            });
+
+            if (!existingTrade) {
+                logger.warn('No open MarketTrade found for exit', { marketId: order.marketId });
+                return;
+            }
+
+            // Calculate exit metrics
+            const exitShares = (existingTrade.exitShares || 0) + filledShares;
+            const exitAmount = (existingTrade.exitAmount || 0) + filledUsdc;
+            const exitPrice = exitAmount / exitShares;  // Weighted avg
+
+            // Calculate remaining shares
+            const currentShares = existingTrade.currentShares - filledShares;
+
+            // Calculate realized P&L for this portion
+            const portionSold = filledShares / existingTrade.entryShares;
+            const costBasisForPortion = existingTrade.entryAmount * portionSold;
+            const profitOnPortion = filledUsdc - costBasisForPortion;
+            const totalProfitLoss = existingTrade.profitLoss + profitOnPortion;
+            const profitLossPct = (totalProfitLoss / existingTrade.entryAmount) * 100;
+
+            // Determine if fully closed
+            const isFullyClosed = currentShares <= 0.0001;
+
+            await this.prisma.marketTrade.update({
+                where: { id: existingTrade.id },
+                data: {
+                    exitPrice,
+                    exitShares,
+                    exitAmount,
+                    exitTime: isFullyClosed ? new Date() : null,
+                    exitReason: order.strategyDetail, // Capture reason from strategyDetail
+                    profitLoss: totalProfitLoss,
+                    profitLossPct,
+                    currentShares: Math.max(0, currentShares),
+                    status: isFullyClosed ? 'CLOSED' : 'OPEN',
+                    updatedAt: new Date()
+                }
+            });
+
+            logger.info('📊 MarketTrade updated for EXIT', {
+                marketId: order.marketId,
+                side: order.side,
+                exitPrice: exitPrice.toFixed(4),
+                profitLoss: totalProfitLoss.toFixed(2),
+                profitLossPct: profitLossPct.toFixed(2) + '%',
+                status: isFullyClosed ? 'CLOSED' : 'OPEN'
+            });
+
+        } else {
+            // BUY - Create or update MarketTrade
+            const existingTrade = await this.prisma.marketTrade.findFirst({
+                where: {
+                    marketId: order.marketId,
+                    side: order.side,
+                    status: 'OPEN'
+                }
+            });
+
+            if (existingTrade) {
+                // Update existing trade with new entry
+                const newEntryShares = existingTrade.entryShares + filledShares;
+                const newEntryAmount = existingTrade.entryAmount + filledUsdc;
+                const newEntryPrice = newEntryAmount / newEntryShares;  // Weighted avg
+
+                await this.prisma.marketTrade.update({
+                    where: { id: existingTrade.id },
+                    data: {
+                        entryPrice: newEntryPrice,
+                        entryShares: newEntryShares,
+                        entryAmount: newEntryAmount,
+                        currentShares: existingTrade.currentShares + filledShares,
+                        updatedAt: new Date()
+                    }
+                });
+
+                logger.info('📊 MarketTrade updated for additional BUY', {
+                    marketId: order.marketId,
+                    side: order.side,
+                    newEntryPrice: newEntryPrice.toFixed(4),
+                    totalInvested: newEntryAmount.toFixed(2)
+                });
+
+            } else {
+                // Create new trade
+                await this.prisma.marketTrade.create({
+                    data: {
+                        marketId: order.marketId,
+                        side: order.side,
+                        status: 'OPEN',
+                        entryPrice: order.price,
+                        entryShares: filledShares,
+                        entryAmount: filledUsdc,
+                        entryTime: new Date(),
+                        currentShares: filledShares,
+                        profitLoss: 0,
+                        profitLossPct: 0,
+                        unrealizedPnl: 0
+                    }
+                });
+
+                logger.info('📊 MarketTrade CREATED', {
+                    marketId: order.marketId,
+                    side: order.side,
+                    entryPrice: order.price.toFixed(4),
+                    invested: filledUsdc.toFixed(2)
+                });
+            }
+        }
     }
 
     /**
@@ -369,7 +505,7 @@ export class RiskManager {
      * Check if we can enter a new market.
      */
     canEnterNewMarket(): boolean {
-        const maxPositions = configService.get('maxActivePositions') || 6;
+        const maxPositions = configService.get('maxActivePositions') || 15;
         return this.positions.size < maxPositions;
     }
 

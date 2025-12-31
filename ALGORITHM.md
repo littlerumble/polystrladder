@@ -90,14 +90,14 @@ selectStrategy(regime):
 ## 5. LADDER ENTRY STRATEGY
 ```python
 generateLadderOrders(state):
-    ladderLevels = [0.60, 0.70, 0.80, 0.90, 0.95]
+    ladderLevels = [0.65, 0.70, 0.80, 0.90, 0.95]
     weights =      [10%,  15%,  25%,  25%,  25%]  # Capital allocation
-    maxBuyPrice = 0.92
+    maxBuyPrice = 0.90
     
     # Determine trade side
-    if priceYes >= 0.60 AND priceYes <= 0.92:
+    if priceYes >= 0.65 AND priceYes <= 0.90:
         tradeSide = YES
-    elif priceNo >= 0.60 AND priceNo <= 0.92:
+    elif priceNo >= 0.65 AND priceNo <= 0.90:
         tradeSide = NO
     else:
         return []  # No conviction
@@ -121,8 +121,8 @@ generateLadderOrders(state):
 ## 6. EXIT STRATEGY (SIMPLE)
 ```python
 shouldExit(position, priceYes, priceNo):
-    TAKE_PROFIT = 0.92
-    STOP_LOSS = 0.60
+    TAKE_PROFIT = 0.90
+    STOP_LOSS = 0.65
     
     if position.sharesYes > 0:
         if priceYes > TAKE_PROFIT:
@@ -177,7 +177,7 @@ MarketState:
     lastPriceYes       # Current YES price
     lastPriceNo        # Current NO price
     priceHistory       # Rolling 15-min price window
-    ladderFilled       # [0.60, 0.70, ...] levels already bought
+    ladderFilled       # [0.65, 0.70, ...] levels already bought
     activeTradeSide    # YES or NO
     lockedTradeSide    # YES or NO (PERMANENT - never flip)
     exposureYes        # $ invested in YES

@@ -52,11 +52,11 @@ npm run start:prod
 | `BOT_MODE` | PAPER | Trading mode (PAPER/LIVE) |
 | `BOT_BANKROLL` | 1000 | Starting bankroll in USD |
 | `BOT_API_PORT` | 3000 | Server port |
-| `DATABASE_URL` | file:./bot.db | SQLite database path |
+| `DATABASE_URL` | mysql://user:pass@host:3306/db | MySQL connection string |
 
 ## Notes
 
-- SQLite database will persist on Railway's volume
+- MySQL database required for production
 - The dashboard is served as static files from the backend
 - WebSocket connections will work automatically
 - CORS is enabled for all origins in development

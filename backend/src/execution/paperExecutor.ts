@@ -63,6 +63,7 @@ export class PaperExecutor implements Executor {
                 data: {
                     marketId: order.marketId,
                     side: order.side,
+                    action: order.isExit ? 'SELL' : 'BUY',
                     price: filledPrice,
                     size: filledUsdc,
                     shares: filledShares,

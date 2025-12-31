@@ -45,9 +45,11 @@ class TradingBot {
     private marketTokens: Map<string, { yes: string; no: string }> = new Map(); // marketId -> {yes: tokenId, no: tokenId}
     private processingLocks: Set<string> = new Set(); // Prevent concurrent processing per market
     private exitedMarkets: Set<string> = new Set(); // Markets we've exited - never re-enter
+    private lastWsUpdates: Map<string, number> = new Map(); // Track last WS update time for standby logic
     private pnlInterval: NodeJS.Timeout | null = null;
     private resolutionCheckInterval: NodeJS.Timeout | null = null;
     private isRunning = false;
+
 
     constructor() {
         this.prisma = new PrismaClient();
@@ -83,6 +85,12 @@ class TradingBot {
 
             // Initialize risk manager
             await this.riskManager.initialize();
+
+            // Setup event handlers - CRITICAL: Must be done before connecting feeds
+            this.setupEventHandlers();
+
+            // Connect to CLOB WebSocket
+            await this.clobFeed.connect();
 
             // Load persisted market states
             await this.loadMarketStates();
@@ -151,6 +159,9 @@ class TradingBot {
     private setupEventHandlers(): void {
         // Handle price updates - this is the main trading loop trigger
         eventBus.on('price:update', async (update: PriceUpdate) => {
+            // Track WS update time for standby logic
+            this.lastWsUpdates.set(update.marketId, Date.now());
+
             try {
                 await this.handlePriceUpdate(update);
             } catch (error) {
@@ -314,7 +325,7 @@ class TradingBot {
             }
 
             // DEBUG: Log order generation for sweet-spot markets
-            if ((update.priceYes >= 0.60 && update.priceYes <= 0.92) || (update.priceNo >= 0.60 && update.priceNo <= 0.92)) {
+            if ((update.priceYes >= 0.65 && update.priceYes <= 0.90) || (update.priceNo >= 0.65 && update.priceNo <= 0.90)) {
                 logger.info('📊 ORDER GENERATION DEBUG', {
                     marketId: update.marketId,
                     priceYes: (update.priceYes * 100).toFixed(1) + '%',
@@ -361,14 +372,14 @@ class TradingBot {
                 proposedOrders.push(...dcaOrders);
             }
 
-            // 6. Check for exit conditions (price > 0.92 or price < 0.60)
+            // 6. Check for exit conditions (price > 0.90 or price < 0.65)
             const position = this.riskManager.getPosition(update.marketId);
             if (position && tokenIdYes && tokenIdNo) {
                 // Skip if we've already exited this market (blacklisted)
                 if (this.exitedMarkets.has(update.marketId)) {
                     proposedOrders = []; // Clear any orders for blacklisted market
                 } else {
-                    // Simple exit check: price > 0.92 (profit) or price < 0.60 (stop loss)
+                    // Simple exit check: price > 0.90 (profit) or price < 0.65 (stop loss)
                     const exitCheck = exitStrategy.shouldExit(
                         position,
                         update.priceYes,
@@ -380,7 +391,8 @@ class TradingBot {
                             updatedState,
                             position,
                             tokenIdYes,
-                            tokenIdNo
+                            tokenIdNo,
+                            exitCheck.reason // Pass the reason
                         );
 
                         if (exitOrder) {
@@ -820,7 +832,7 @@ class TradingBot {
     private gammaPriceInterval: NodeJS.Timeout | null = null;
 
     private startGammaPricePolling(): void {
-        const pollInterval = 2000; // 2 seconds for accurate trading
+        const pollInterval = 1000; // 1 second for faster updates
 
         this.gammaPriceInterval = setInterval(async () => {
             try {
@@ -835,62 +847,79 @@ class TradingBot {
             logger.error('Initial Gamma price poll failed', { error: String(err) });
         });
 
-        logger.info('Started Gamma price polling every 2s (replaces garbage CLOB prices)');
+        logger.info('Started Gamma price polling every 1s (parallel config)');
     }
 
     /**
      * Poll Gamma API for accurate prices and update market states.
+     * Uses parallel execution (concurrency 10) to speed up updates.
      */
     private async pollGammaPrices(): Promise<void> {
         const marketIds = Array.from(this.marketStates.keys());
 
-        for (const marketId of marketIds) {
-            try {
-                const response = await axios.get(
-                    `https://gamma-api.polymarket.com/markets/${marketId}`,
-                    { timeout: 5000 }
-                );
+        // Process in batches of 10 to avoid rate limits but maximize speed
+        const BATCH_SIZE = 10;
+        const STANDBY_THRESHOLD_MS = 2000;
 
-                const marketData = response.data;
-                if (!marketData.outcomePrices) continue;
+        for (let i = 0; i < marketIds.length; i += BATCH_SIZE) {
+            const batch = marketIds.slice(i, i + BATCH_SIZE);
 
-                const prices = JSON.parse(marketData.outcomePrices);
-                const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
-                const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
-                const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
-
-                let priceYes: number;
-                let priceNo: number;
-                if (yesIndex !== -1 && noIndex !== -1) {
-                    priceYes = parseFloat(prices[yesIndex]);
-                    priceNo = parseFloat(prices[noIndex]);
-                } else {
-                    priceYes = parseFloat(prices[0]);
-                    priceNo = parseFloat(prices[1]);
+            await Promise.all(batch.map(async (marketId) => {
+                // STANDBY CHECK: Skip if WS updated recently
+                const lastUpdate = this.lastWsUpdates.get(marketId) || 0;
+                if (Date.now() - lastUpdate < STANDBY_THRESHOLD_MS) {
+                    return; // WS is active, skip API call
                 }
 
-                if (isNaN(priceYes) || isNaN(priceNo)) continue;
+                try {
+                    const response = await axios.get(
+                        `https://gamma-api.polymarket.com/markets/${marketId}`,
+                        { timeout: 3000 } // Reduced timeout
+                    );
 
-                // Update the in-memory market state with accurate Gamma prices
-                const state = this.marketStates.get(marketId);
-                if (state) {
-                    const tokens = this.marketTokens.get(marketId);
+                    const marketData = response.data;
+                    if (!marketData.outcomePrices) return;
 
-                    // Create a synthetic price update with Gamma data
-                    const update: PriceUpdate = {
-                        marketId,
-                        tokenId: tokens?.yes || marketId,
-                        priceYes,
-                        priceNo,
-                        timestamp: new Date()
-                    };
+                    const prices = JSON.parse(marketData.outcomePrices);
+                    const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+                    const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
+                    const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
 
-                    // Process through the regular trading loop
-                    await this.handlePriceUpdate(update);
+                    let priceYes: number;
+                    let priceNo: number;
+                    if (yesIndex !== -1 && noIndex !== -1) {
+                        priceYes = parseFloat(prices[yesIndex]);
+                        priceNo = parseFloat(prices[noIndex]);
+                    } else {
+                        priceYes = parseFloat(prices[0]);
+                        priceNo = parseFloat(prices[1]);
+                    }
+
+                    if (isNaN(priceYes) || isNaN(priceNo)) return;
+
+                    // Update the in-memory market state with accurate Gamma prices
+                    const state = this.marketStates.get(marketId);
+                    if (state) {
+                        const tokens = this.marketTokens.get(marketId);
+
+                        // Create a synthetic price update with Gamma data
+                        const update: PriceUpdate = {
+                            marketId,
+                            tokenId: tokens?.yes || marketId,
+                            priceYes,
+                            priceNo,
+                            timestamp: new Date()
+                        };
+
+                        // Process through the regular trading loop
+                        // Note: handlePriceUpdate expects PriceUpdate with bestBid/Ask if available
+                        // Gamma doesn't give Bids/Asks, just last/mid. That's fine.
+                        await this.handlePriceUpdate(update);
+                    }
+                } catch (error) {
+                    // Silently skip failed fetches
                 }
-            } catch (error) {
-                // Silently skip failed fetches - market might be resolved or API error
-            }
+            }));
         }
     }
 
@@ -1159,6 +1188,29 @@ class TradingBot {
         // Execute all position updates
         if (positionUpdates.length > 0) {
             await Promise.all(positionUpdates);
+        }
+
+        // Also update MarketTrade unrealizedPnl for open trades
+        const openTrades = await this.prisma.marketTrade.findMany({
+            where: { status: 'OPEN' }
+        });
+
+        for (const trade of openTrades) {
+            const prices = currentPrices.get(trade.marketId);
+            if (prices) {
+                const currentPrice = trade.side === 'YES' ? prices.yes : prices.no;
+                const currentValue = trade.currentShares * currentPrice;
+                const remainingCostBasis = trade.entryAmount * (trade.currentShares / trade.entryShares);
+                const unrealizedPnl = currentValue - remainingCostBasis;
+
+                await this.prisma.marketTrade.update({
+                    where: { id: trade.id },
+                    data: {
+                        currentPrice,
+                        unrealizedPnl
+                    }
+                }).catch(() => { }); // Ignore errors
+            }
         }
 
         const totalValue = cashBalance + positionsValue;

@@ -41,6 +41,7 @@ export interface Trade {
     id: number;
     marketId: string;
     side: string;
+    action?: string; // BUY or SELL
     price: number;
     size: number;
     shares: number;
@@ -83,11 +84,67 @@ export interface Portfolio {
     unrealizedPnl: number;
     realizedPnl: number;
     positionCount: number;
+    closedCount?: number;        // NEW: From MarketTrade
+    winCount?: number;           // NEW: From MarketTrade
+    lossCount?: number;          // NEW: From MarketTrade
+    winRate?: number;            // NEW: From MarketTrade
     allocation: {                // NEW: Capital allocation percentages
         tradeableCashPct: number;
         positionsPct: number;
         lockedProfitsPct: number;
     };
+}
+
+// NEW: Active trade from MarketTrade table
+export interface ActiveTrade {
+    id: number;
+    marketId: string;
+    side: string;
+    status: string;
+    entryPrice: number;
+    entryShares: number;
+    entryAmount: number;
+    entryTime: string;
+    currentShares: number;
+    currentPrice: number | null;
+    unrealizedPnl: number;
+    unrealizedPct: number;
+    marketQuestion?: string;
+    market?: Market;
+}
+
+// NEW: Closed trade from MarketTrade table
+export interface ClosedTrade {
+    id: number;
+    marketId: string;
+    side: string;
+    entryPrice: number;
+    entryAmount: number;
+    entryTime: string;
+    exitPrice: number | null;
+    exitAmount: number | null;
+    exitTime: string | null;
+    profitLoss: number;
+    profitLossPct: number;
+    isWin: boolean;
+    holdTime: number | null;  // In minutes
+    marketQuestion?: string;
+    exitReason?: string;
+}
+
+// NEW: Trade summary stats
+export interface TradeSummary {
+    activeCount: number;
+    totalInvested: number;
+    closedCount: number;
+    winCount: number;
+    lossCount: number;
+    winRate: number;
+    totalRealized: number;
+    avgWin: number;
+    avgLoss: number;
+    totalTurnover: number;
+    returnOnInvestment: number;
 }
 
 export interface Config {
@@ -118,7 +175,10 @@ export function useApi() {
     // Data state
     const [markets, setMarkets] = useState<Market[]>([]);
     const [marketStates, setMarketStates] = useState<MarketState[]>([]);
-    const [positions, setPositions] = useState<Position[]>([]);
+    const [positions, setPositions] = useState<Position[]>([]);  // Keep for backward compat
+    const [activeTrades, setActiveTrades] = useState<ActiveTrade[]>([]);  // NEW: From MarketTrade
+    const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>([]);  // NEW: From MarketTrade
+    const [tradeSummary, setTradeSummary] = useState<TradeSummary | null>(null);  // NEW
     const [trades, setTrades] = useState<Trade[]>([]);
     const [pnlHistory, setPnlHistory] = useState<PnlSnapshot[]>([]);
     const [strategyEvents, setStrategyEvents] = useState<StrategyEvent[]>([]);
@@ -132,6 +192,9 @@ export function useApi() {
                 marketsData,
                 statesData,
                 positionsData,
+                activeTradesData,
+                closedTradesData,
+                tradeSummaryData,
                 tradesData,
                 pnlData,
                 eventsData,
@@ -140,7 +203,10 @@ export function useApi() {
             ] = await Promise.all([
                 fetchJson<Market[]>('/api/markets'),
                 fetchJson<MarketState[]>('/api/market-states'),
-                fetchJson<Position[]>('/api/positions'),
+                fetchJson<Position[]>('/api/positions'),  // Keep for backward compat
+                fetchJson<ActiveTrade[]>('/api/trades/active'),  // NEW
+                fetchJson<ClosedTrade[]>('/api/trades/closed'),  // NEW
+                fetchJson<TradeSummary>('/api/trades/summary'),  // NEW
                 fetchJson<Trade[]>('/api/trades?limit=50'),
                 fetchJson<PnlSnapshot[]>('/api/pnl?limit=500'),
                 fetchJson<StrategyEvent[]>('/api/strategy-events?limit=50'),
@@ -151,6 +217,9 @@ export function useApi() {
             setMarkets(marketsData);
             setMarketStates(statesData);
             setPositions(positionsData);
+            setActiveTrades(activeTradesData);
+            setClosedTrades(closedTradesData);
+            setTradeSummary(tradeSummaryData);
             setTrades(tradesData);
             setPnlHistory(pnlData);
             setStrategyEvents(eventsData);
@@ -216,6 +285,9 @@ export function useApi() {
         markets,
         marketStates,
         positions,
+        activeTrades,    // NEW: From MarketTrade
+        closedTrades,    // NEW: From MarketTrade
+        tradeSummary,    // NEW: From MarketTrade
         trades,
         pnlHistory,
         strategyEvents,
