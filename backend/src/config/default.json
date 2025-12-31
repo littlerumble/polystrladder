@@ -477,10 +477,9 @@
     "ladderLevels": [
         0.65,
         0.70,
-        0.80,
-        0.90
+        0.80
     ],
-    "maxBuyPrice": 0.90,
+    "maxBuyPrice": 0.84,
     "tailPriceThreshold": 0.05,
     "tailExposurePct": 0.0075,
     "volatilityWindowMinutes": 15,

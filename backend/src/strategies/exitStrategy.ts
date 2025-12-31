@@ -2,70 +2,156 @@ import { ProposedOrder, Side, StrategyType, MarketState, Position } from '../cor
 import { strategyLogger as logger } from '../core/logger.js';
 
 /**
- * Exit Strategy - Simple Price-Based Exit
+ * Exit Strategy - Trailing Stop with Safety Cap
  * 
- * TAKE PROFIT: Exit 100% if price > 0.90
- * STOP LOSS: Exit 100% if price < 0.65
+ * TRAILING STOP:
+ * - Activates when price > 90%
+ * - Tracks highest price seen (high water mark)
+ * - Exits when price drops 1% from high water mark
  * 
- * No partial exits, no moon bags. All or nothing.
+ * SAFETY CAP:
+ * - Always exit at 98% (near resolution, prevent gap risk)
+ * 
+ * STOP LOSS:
+ * - Exit if price < 65%
  */
 
 // Exit thresholds
-const TAKE_PROFIT_PRICE = 0.90;
-const STOP_LOSS_PRICE = 0.65;
+const TRAILING_ACTIVATION_PRICE = 0.90;  // Activate trailing stop above this
+const TRAILING_DISTANCE = 0.01;          // 1% trailing stop distance
+const SAFETY_CAP_PRICE = 0.98;           // Always exit at this price (safety)
+const STOP_LOSS_PRICE = 0.65;            // Stop loss threshold
 
 export interface ExitCheckResult {
     shouldExit: boolean;
     reason: string;
     isProfit: boolean;
+    // Trailing stop state updates
+    trailingStopActive?: boolean;
+    highWaterMark?: number;
 }
 
 /**
- * Check if a position should be exited based on price thresholds.
+ * Check if a position should be exited based on trailing stop logic.
  * 
- * Exit if:
- * - Price > 0.90 (take profit)
- * - Price < 0.65 (stop loss)
+ * Logic:
+ * 1. Price >= 98% → SELL (safety cap)
+ * 2. Price < 65% → SELL (stop loss)
+ * 3. Price >= 90% → Activate trailing stop, track high water mark
+ * 4. Price drops 1% from high → SELL (trailing stop triggered)
  */
 export function shouldExit(
     position: Position,
     currentPriceYes: number,
-    currentPriceNo: number
+    currentPriceNo: number,
+    state?: MarketState  // Optional state for trailing stop tracking
 ): ExitCheckResult {
-    // Check YES position
+    // Determine which side we have a position on
+    let currentPrice: number;
+    let side: string;
+
     if (position.sharesYes > 0) {
-        if (currentPriceYes > TAKE_PROFIT_PRICE) {
+        currentPrice = currentPriceYes;
+        side = 'YES';
+    } else if (position.sharesNo > 0) {
+        currentPrice = currentPriceNo;
+        side = 'NO';
+    } else {
+        return { shouldExit: false, reason: 'No position', isProfit: false };
+    }
+
+    // 1. SAFETY CAP - Always exit at 98%
+    if (currentPrice >= SAFETY_CAP_PRICE) {
+        return {
+            shouldExit: true,
+            reason: `🎯 SAFETY CAP: ${side} price ${(currentPrice * 100).toFixed(1)}% >= ${SAFETY_CAP_PRICE * 100}%`,
+            isProfit: true
+        };
+    }
+
+    // 2. STOP LOSS - Exit if price drops below threshold
+    if (currentPrice < STOP_LOSS_PRICE) {
+        return {
+            shouldExit: true,
+            reason: `🛑 STOP LOSS: ${side} price ${(currentPrice * 100).toFixed(1)}% < ${STOP_LOSS_PRICE * 100}%`,
+            isProfit: false
+        };
+    }
+
+    // 3. TRAILING STOP LOGIC (requires state)
+    if (state) {
+        const isTrailingActive = state.trailingStopActive;
+        const highWaterMark = state.highWaterMark || 0;
+
+        // Check if we should activate trailing stop
+        if (!isTrailingActive && currentPrice >= TRAILING_ACTIVATION_PRICE) {
+            // Activate trailing stop - don't exit yet, just track
+            logger.info('🚀 TRAILING STOP ACTIVATED', {
+                marketId: state.marketId,
+                side,
+                price: (currentPrice * 100).toFixed(1) + '%',
+                trailingDistance: (TRAILING_DISTANCE * 100).toFixed(1) + '%'
+            });
+
             return {
-                shouldExit: true,
-                reason: `💰 TAKE PROFIT: YES price ${(currentPriceYes * 100).toFixed(1)}% > ${TAKE_PROFIT_PRICE * 100}%`,
-                isProfit: true
+                shouldExit: false,
+                reason: 'Trailing stop activated - tracking high',
+                isProfit: false,
+                trailingStopActive: true,
+                highWaterMark: currentPrice
             };
         }
-        if (currentPriceYes < STOP_LOSS_PRICE) {
+
+        // If trailing stop is active, check if we should update high water mark or exit
+        if (isTrailingActive) {
+            // Update high water mark if price is higher
+            if (currentPrice > highWaterMark) {
+                logger.debug('📈 HIGH WATER MARK UPDATED', {
+                    marketId: state.marketId,
+                    oldHigh: (highWaterMark * 100).toFixed(1) + '%',
+                    newHigh: (currentPrice * 100).toFixed(1) + '%'
+                });
+
+                return {
+                    shouldExit: false,
+                    reason: 'High water mark updated',
+                    isProfit: false,
+                    trailingStopActive: true,
+                    highWaterMark: currentPrice
+                };
+            }
+
+            // Check if price dropped below trailing stop threshold
+            const trailStopPrice = highWaterMark * (1 - TRAILING_DISTANCE);
+            if (currentPrice <= trailStopPrice) {
+                return {
+                    shouldExit: true,
+                    reason: `📉 TRAILING STOP: ${side} price ${(currentPrice * 100).toFixed(1)}% dropped 1% from high ${(highWaterMark * 100).toFixed(1)}%`,
+                    isProfit: true
+                };
+            }
+
+            // Still above trailing stop, keep holding
             return {
-                shouldExit: true,
-                reason: `🛑 STOP LOSS: YES price ${(currentPriceYes * 100).toFixed(1)}% < ${STOP_LOSS_PRICE * 100}%`,
-                isProfit: false
+                shouldExit: false,
+                reason: `Holding - price ${(currentPrice * 100).toFixed(1)}% above trail stop ${(trailStopPrice * 100).toFixed(1)}%`,
+                isProfit: false,
+                trailingStopActive: true,
+                highWaterMark: highWaterMark
             };
         }
     }
 
-    // Check NO position
-    if (position.sharesNo > 0) {
-        if (currentPriceNo > TAKE_PROFIT_PRICE) {
-            return {
-                shouldExit: true,
-                reason: `💰 TAKE PROFIT: NO price ${(currentPriceNo * 100).toFixed(1)}% > ${TAKE_PROFIT_PRICE * 100}%`,
-                isProfit: true
-            };
-        }
-        if (currentPriceNo < STOP_LOSS_PRICE) {
-            return {
-                shouldExit: true,
-                reason: `🛑 STOP LOSS: NO price ${(currentPriceNo * 100).toFixed(1)}% < ${STOP_LOSS_PRICE * 100}%`,
-                isProfit: false
-            };
-        }
+    // No state provided or trailing not active - use simple threshold check
+    // (This is a fallback for the first call before state is available)
+    if (currentPrice > TRAILING_ACTIVATION_PRICE) {
+        return {
+            shouldExit: false,
+            reason: 'Price above activation - needs state for trailing stop',
+            isProfit: false,
+            trailingStopActive: true,
+            highWaterMark: currentPrice
+        };
     }
 
     return { shouldExit: false, reason: 'Holding position', isProfit: false };
@@ -79,7 +165,7 @@ export function generateExitOrder(
     position: Position,
     tokenIdYes: string,
     tokenIdNo: string,
-    reason: string = 'full_exit' // New parameter
+    reason: string = 'full_exit'
 ): ProposedOrder | null {
     let side: Side;
     let tokenId: string;
@@ -110,7 +196,7 @@ export function generateExitOrder(
         sizeUsdc,
         shares: shares,
         strategy: StrategyType.PROFIT_TAKING,
-        strategyDetail: reason, // Use the passed reason
+        strategyDetail: reason,
         confidence: 1.0,
         isExit: true
     };
@@ -125,7 +211,9 @@ export function generateExitOrder(
             reason,
             side,
             sharesToSell: shares.toFixed(4),
-            sizeUsdc: sizeUsdc.toFixed(2)
+            sizeUsdc: sizeUsdc.toFixed(2),
+            trailingStopActive: state.trailingStopActive,
+            highWaterMark: state.highWaterMark
         }
     });
 

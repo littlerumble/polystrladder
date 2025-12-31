@@ -28,8 +28,8 @@ import { strategyLogger as logger } from '../core/logger.js';
 
 // Confidence weights for each ladder level (must sum to 1.0)
 // Lower levels = less capital, higher levels = more capital
-// Updated to match 4 ladder levels: [0.65, 0.70, 0.80, 0.90]
-const CONFIDENCE_WEIGHTS = [0.15, 0.20, 0.30, 0.35];
+// Updated to match 3 ladder levels: [0.65, 0.70, 0.80]
+const CONFIDENCE_WEIGHTS = [0.25, 0.35, 0.40];
 
 // Hold-above time: price must stay above level for this duration before buying
 // Prevents buying on brief spikes that immediately reverse
@@ -361,8 +361,9 @@ export function generateDCAOrders(
 
     const dipPct = (avgEntry - currentPrice) / avgEntry;
 
-    // Only DCA if price dipped 5%+ from average entry
-    const DIP_THRESHOLD = 0.05;
+    // Only DCA if price dipped 2%+ from average entry (tightened from 5%)
+    // This ensures we're actually lowering our average cost
+    const DIP_THRESHOLD = 0.02;
     if (dipPct < DIP_THRESHOLD) {
         return orders;
     }

@@ -323,8 +323,17 @@ class TradingBot {
                 const exitCheck = exitStrategy.shouldExit(
                     position,
                     update.priceYes,
-                    update.priceNo
+                    update.priceNo,
+                    updatedState  // Pass state for trailing stop tracking
                 );
+
+                // Update trailing stop state from exit check result
+                if (exitCheck.trailingStopActive !== undefined) {
+                    updatedState.trailingStopActive = exitCheck.trailingStopActive;
+                }
+                if (exitCheck.highWaterMark !== undefined) {
+                    updatedState.highWaterMark = exitCheck.highWaterMark;
+                }
 
                 if (exitCheck.shouldExit) {
                     const exitOrder = exitStrategy.generateExitOrder(
@@ -336,14 +345,14 @@ class TradingBot {
                     );
 
                     if (exitOrder) {
-                        // Log the exit
+                        // Log the exit with appropriate message
                         if (exitCheck.isProfit) {
-                            logger.info('💰 TAKING PROFIT - Price > 90%', {
+                            logger.info('💰 PROFIT EXIT', {
                                 marketId: update.marketId,
                                 reason: exitCheck.reason
                             });
                         } else {
-                            logger.info('🛑 STOP LOSS - Price < 65%', {
+                            logger.info('🛑 STOP LOSS', {
                                 marketId: update.marketId,
                                 reason: exitCheck.reason
                             });
@@ -697,6 +706,8 @@ class TradingBot {
             exposureYes: 0,
             exposureNo: 0,
             tailActive: false,
+            trailingStopActive: false,  // Trailing stop not active initially
+            highWaterMark: 0,           // No high water mark yet
             lastUpdated: new Date()
         };
         this.marketStates.set(marketId, state);
@@ -811,6 +822,8 @@ class TradingBot {
                 exposureYes: 0,
                 exposureNo: 0,
                 tailActive: dbState.tailActive,
+                trailingStopActive: (dbState as any).trailingStopActive || false,  // Load from DB
+                highWaterMark: (dbState as any).highWaterMark || 0,                 // Load from DB
                 lastUpdated: dbState.lastProcessed
             };
 
@@ -851,6 +864,8 @@ class TradingBot {
                 activeTradeSide: state.activeTradeSide || null,
                 lockedTradeSide: state.lockedTradeSide || null,  // PERMANENT side lock
                 tailActive: state.tailActive,
+                trailingStopActive: state.trailingStopActive,    // Persist trailing stop state
+                highWaterMark: state.highWaterMark,              // Persist high water mark
                 lastProcessed
             },
             create: {
@@ -861,6 +876,8 @@ class TradingBot {
                 activeTradeSide: state.activeTradeSide || null,
                 lockedTradeSide: state.lockedTradeSide || null,  // PERMANENT side lock
                 tailActive: state.tailActive,
+                trailingStopActive: state.trailingStopActive,    // Persist trailing stop state
+                highWaterMark: state.highWaterMark,              // Persist high water mark
                 lastProcessed
             }
         });

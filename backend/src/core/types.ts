@@ -102,6 +102,9 @@ export interface MarketState {
     exposureYes: number;
     exposureNo: number;
     tailActive: boolean;
+    // Trailing stop fields
+    trailingStopActive: boolean;       // True when price crossed 90% threshold
+    highWaterMark: number;             // Highest price seen since trailing stop activated
     lastUpdated: Date;
 }
 
