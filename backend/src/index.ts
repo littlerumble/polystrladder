@@ -44,6 +44,7 @@ class TradingBot {
     private tokenToMarket: Map<string, string> = new Map();
     private marketTokens: Map<string, { yes: string; no: string }> = new Map(); // marketId -> {yes: tokenId, no: tokenId}
     private processingLocks: Set<string> = new Set(); // Prevent concurrent processing per market
+    private exitedMarkets: Set<string> = new Set(); // Markets we've exited - never re-enter
     private pnlInterval: NodeJS.Timeout | null = null;
     private resolutionCheckInterval: NodeJS.Timeout | null = null;
     private isRunning = false;
@@ -360,99 +361,47 @@ class TradingBot {
                 proposedOrders.push(...dcaOrders);
             }
 
-            // 6. Check for Pre-game Stop Loss FIRST (exit at 60%, 10 min cooldown)
-            // We do this BEFORE regular strategy execution to prioritize exits
+            // 6. Check for exit conditions (price > 0.92 or price < 0.60)
             const position = this.riskManager.getPosition(update.marketId);
-            if (position) {
-                // Determine which side we hold
-                const positionSide = position.sharesYes > 0 ? 'YES' as const :
-                    position.sharesNo > 0 ? 'NO' as const : null;
-
-                // Check pre-game stop loss (exit if < 60% before match)
-                const preGameCheck = exitStrategy.checkPreGameStopLoss(
-                    updatedState,
-                    update.priceYes,
-                    update.priceNo,
-                    positionSide,
-                    market?.endDate  // Use endDate as game start time
-                );
-                updatedState = preGameCheck.updatedState;
-
-                if (preGameCheck.shouldExit && tokenIdYes && tokenIdNo) {
-                    const exitOrder = exitStrategy.generateExitOrder(
-                        updatedState,
+            if (position && tokenIdYes && tokenIdNo) {
+                // Skip if we've already exited this market (blacklisted)
+                if (this.exitedMarkets.has(update.marketId)) {
+                    proposedOrders = []; // Clear any orders for blacklisted market
+                } else {
+                    // Simple exit check: price > 0.92 (profit) or price < 0.60 (stop loss)
+                    const exitCheck = exitStrategy.shouldExit(
                         position,
-                        tokenIdYes,
-                        tokenIdNo,
-                        1.0  // Full exit for pre-game stop loss
-                    );
-                    if (exitOrder) {
-                        logger.info('🛑 PRE-GAME STOP LOSS EXIT', {
-                            marketId: update.marketId,
-                            side: positionSide,
-                            reason: preGameCheck.reason
-                        });
-                        proposedOrders = [exitOrder];
-                        // Persist updated state with cooldown
-                        await this.persistMarketState(updatedState);
-                        this.marketStates.set(update.marketId, updatedState);
-                    }
-                }
-
-                // First, check and track consensus break state
-                const consensusCheck = exitStrategy.checkConsensusBreak(updatedState, update.priceYes, update.priceNo, positionSide);
-                updatedState = consensusCheck.updatedState;
-
-                // Check if we should exit (profit, moon bag exit, or thesis stop)
-                const exitCheck = exitStrategy.shouldTakeProfit(
-                    position,
-                    update.priceYes,
-                    update.priceNo,
-                    updatedState.consensusBreakConfirmed,
-                    updatedState.moonBagActive,
-                    updatedState.moonBagPriceAtActivation,
-                    market?.endDate  // Use endDate instead of gameStartTime
-                );
-
-                if (exitCheck.shouldExit && tokenIdYes && tokenIdNo) {
-                    const exitOrder = exitStrategy.generateExitOrder(
-                        updatedState,
-                        position,
-                        tokenIdYes,
-                        tokenIdNo,
-                        exitCheck.exitPct  // 0.75 for partial, 1.0 for full
+                        update.priceYes,
+                        update.priceNo
                     );
 
-                    if (exitOrder) {
-                        if (exitCheck.isMoonBagExit) {
-                            logger.info('🌙 MOON BAG EXIT - Price dropped, selling remaining', {
-                                marketId: update.marketId,
-                                reason: exitCheck.reason
-                            });
-                        } else if (exitCheck.isProfit && exitCheck.exitPct < 1.0) {
-                            logger.info('💰 TAKING 75% PROFIT - Creating moon bag', {
-                                marketId: update.marketId,
-                                profitPct: (exitCheck.profitPct * 100).toFixed(1) + '%',
-                                reason: exitCheck.reason
-                            });
-                            // Activate moon bag after this order executes
-                            updatedState.moonBagActive = true;
-                            updatedState.moonBagPriceAtActivation = update.priceYes;
-                        } else if (exitCheck.isProfit) {
-                            logger.info('💰 TAKING FULL PROFIT', {
-                                marketId: update.marketId,
-                                profitPct: (exitCheck.profitPct * 100).toFixed(1) + '%'
-                            });
-                        } else {
-                            logger.info('🛑 THESIS STOP - Consensus broken', {
-                                marketId: update.marketId,
-                                pnlPct: (exitCheck.profitPct * 100).toFixed(1) + '%',
-                                reason: exitCheck.reason
-                            });
+                    if (exitCheck.shouldExit) {
+                        const exitOrder = exitStrategy.generateExitOrder(
+                            updatedState,
+                            position,
+                            tokenIdYes,
+                            tokenIdNo
+                        );
+
+                        if (exitOrder) {
+                            if (exitCheck.isProfit) {
+                                logger.info('💰 TAKING PROFIT - Price > 92%', {
+                                    marketId: update.marketId,
+                                    reason: exitCheck.reason
+                                });
+                            } else {
+                                logger.info('🛑 STOP LOSS - Price < 60%', {
+                                    marketId: update.marketId,
+                                    reason: exitCheck.reason
+                                });
+                            }
+
+                            // Add to blacklist - never re-enter this market
+                            this.exitedMarkets.add(update.marketId);
+
+                            // IMPORTANT: When exiting, only include the exit order
+                            proposedOrders = [exitOrder];
                         }
-
-                        // IMPORTANT: When exiting, only include the exit order
-                        proposedOrders = [exitOrder];
                     }
                 }
             }
@@ -662,8 +611,7 @@ class TradingBot {
             exposureNo: 0,
             tailActive: false,
             lastUpdated: new Date(),
-            consensusBreakConfirmed: false,
-            moonBagActive: false
+            consensusBreakConfirmed: false
         };
         this.marketStates.set(marketId, state);
 
@@ -778,7 +726,6 @@ class TradingBot {
                 tailActive: dbState.tailActive,
                 lastUpdated: dbState.lastProcessed,
                 consensusBreakConfirmed: false,
-                moonBagActive: false,
                 stopLossTriggeredAt: dbState.stopLossTriggeredAt || undefined,
                 cooldownUntil: dbState.cooldownUntil || undefined
             };
