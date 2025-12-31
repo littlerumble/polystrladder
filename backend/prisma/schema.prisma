@@ -55,7 +55,7 @@ model MarketTrade {
   exitShares      Float?    // Total shares sold
   exitAmount      Float?    // Total $ received on exit
   exitTime        DateTime? // Full exit timestamp
-  exitReason      String?   // Why we exited (e.g. "STOP LOSS: Price 0.43 < 0.65")
+  exitReason      String?   @db.Text // Why we exited (e.g. "STOP LOSS: Price 0.43 < 0.65")
 
   
   // P&L metrics
@@ -85,7 +85,7 @@ model Trade {
   size            Float    // USDC amount
   shares          Float    // Number of shares
   strategy        String   // LADDER_COMPRESSION, VOLATILITY_ABSORPTION, TAIL_INSURANCE
-  strategyDetail  String?  // e.g., ladder level or exit reason
+  strategyDetail  String?   @db.Text // e.g., ladder level or exit reason
   status          String   @default("FILLED") // FILLED, PENDING, REJECTED
   timestamp       DateTime @default(now())
 }
@@ -127,7 +127,7 @@ model StrategyEvent {
   action          String   // ENTER, SKIP, LADDER_FILL, TAIL_TRIGGER, etc.
   priceYes        Float
   priceNo         Float
-  details         String?  // JSON with additional context
+  details         String?   @db.Text // JSON with additional context
   timestamp       DateTime @default(now())
 }
 
