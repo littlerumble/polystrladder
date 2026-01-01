@@ -733,7 +733,6 @@ export class DashboardServer {
                 const limit = parseInt(req.query.limit as string) || 50;
 
                 // Fetch activity from Polymarket Data API
-                const axios = (await import('axios')).default;
                 const response = await axios.get('https://data-api.polymarket.com/activity', {
                     params: {
                         user: wallet,
