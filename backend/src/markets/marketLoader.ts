@@ -19,10 +19,12 @@ interface GammaMarket {
     liquidityNum?: number;
     liquidity?: string;
     outcomes?: string;
+    outcomePrices?: string;  // JSON array of prices for each outcome
     clobTokenIds?: string;
     active?: boolean;
     closed?: boolean;
     enableOrderBook?: boolean;
+    spread?: number;             // Bid-ask spread
     // Mutually exclusive market group fields
     negRisk?: boolean;           // True = multi-outcome market (only one can win)
     negRiskMarketID?: string;    // Parent group ID for mutually exclusive markets
@@ -109,13 +111,8 @@ export class MarketLoader {
             // Must be active and not closed
             if (!market.active || market.closed) return false;
 
-            // EXCLUDE mutually exclusive markets (negRisk = true)
-            // These are multi-outcome markets like "Steam GOTY" where multiple options exist
-            // but only ONE can win. Betting on multiple is guaranteed loss.
-            if (market.negRisk === true) {
-                logger.debug(`Excluded negRisk market (mutually exclusive): ${market.question?.substring(0, 50)}... [group: ${market.groupItemTitle || 'unknown'}]`);
-                return false;
-            }
+            // NOTE: negRisk markets are NOT excluded here
+            // Instead, we filter to pick the best one per group after this step
 
             // Must have end date
             if (!market.endDate) return false;
@@ -312,12 +309,130 @@ export class MarketLoader {
     }
 
     /**
+     * Select the BEST market from each negRiskMarketID group.
+     * 
+     * For multi-outcome markets (negRisk=true), only ONE option can win.
+     * Instead of excluding all, we pick the best candidate from each group.
+     * 
+     * Priority scoring:
+     * 1. Highest volume (indicates market confidence)
+     * 2. Tightest spread (better execution)
+     * 3. Price closest to 0.70-0.85 EV zone (best risk/reward)
+     * 4. Higher liquidity
+     */
+    private selectBestFromNegRiskGroups(markets: MarketData[], rawMarkets: GammaMarket[]): MarketData[] {
+        // Build a map of marketId -> raw market data for spread/price info
+        const rawMarketMap = new Map<string, GammaMarket>();
+        for (const raw of rawMarkets) {
+            rawMarketMap.set(raw.id, raw);
+        }
+
+        // Separate negRisk and non-negRisk markets
+        const nonNegRiskMarkets: MarketData[] = [];
+        const negRiskGroups = new Map<string, MarketData[]>();
+
+        for (const market of markets) {
+            const raw = rawMarketMap.get(market.marketId);
+
+            if (raw?.negRisk && raw.negRiskMarketID) {
+                // Group by negRiskMarketID
+                const groupId = raw.negRiskMarketID;
+                if (!negRiskGroups.has(groupId)) {
+                    negRiskGroups.set(groupId, []);
+                }
+                negRiskGroups.get(groupId)!.push(market);
+            } else {
+                // Not a negRisk market, keep as-is
+                nonNegRiskMarkets.push(market);
+            }
+        }
+
+        // For each group, select the best one
+        const selectedFromGroups: MarketData[] = [];
+
+        for (const [groupId, groupMarkets] of negRiskGroups) {
+            if (groupMarkets.length === 0) continue;
+
+            // Score each market in the group
+            const scored = groupMarkets.map(market => {
+                const raw = rawMarketMap.get(market.marketId);
+                let score = 0;
+
+                // 1. Volume (max 40 points) - higher is better
+                score += Math.min(market.volume24h / 100000, 1) * 40;
+
+                // 2. Spread (max 20 points) - tighter (lower) is better
+                const spread = raw?.spread ?? 0.05;  // Default to 5% if unknown
+                const spreadScore = Math.max(0, 20 - (spread * 200));  // 0% spread = 20pts, 10% spread = 0pts
+                score += spreadScore;
+
+                // 3. Price in EV zone 0.70-0.85 (max 25 points)
+                // Parse price from raw market
+                let price = 0.5;
+                if (raw?.outcomePrices) {
+                    try {
+                        const prices = JSON.parse(raw.outcomePrices);
+                        price = parseFloat(prices[0]) || 0.5;  // YES price
+                    } catch { }
+                }
+                // Distance from optimal zone center (0.775)
+                const optimalCenter = 0.775;
+                const distance = Math.abs(price - optimalCenter);
+                // Within 0.70-0.85 is the zone (0.075 from center is edge)
+                if (distance <= 0.075) {
+                    score += 25;  // In the sweet spot
+                } else if (distance <= 0.15) {
+                    score += 15;  // Close to sweet spot
+                } else if (distance <= 0.25) {
+                    score += 5;   // Reasonable
+                }
+
+                // 4. Liquidity (max 15 points)
+                score += Math.min(market.liquidity / 50000, 1) * 15;
+
+                return { market, score, price };
+            });
+
+            // Sort by score descending
+            scored.sort((a, b) => b.score - a.score);
+
+            const selected = scored[0];
+            selectedFromGroups.push(selected.market);
+
+            logger.info(`📊 NegRisk group selection: ${groupId.substring(0, 16)}...`, {
+                groupSize: groupMarkets.length,
+                selected: {
+                    question: selected.market.question.substring(0, 40),
+                    score: selected.score.toFixed(2),
+                    price: (selected.price * 100).toFixed(1) + '¢',
+                    volume: selected.market.volume24h
+                },
+                rejected: scored.slice(1).map(s => ({
+                    question: s.market.question.substring(0, 30),
+                    score: s.score.toFixed(2)
+                }))
+            });
+        }
+
+        const result = [...nonNegRiskMarkets, ...selectedFromGroups];
+
+        if (negRiskGroups.size > 0) {
+            logger.info(`NegRisk deduplication: ${markets.length} → ${result.length} markets (${negRiskGroups.size} groups processed)`);
+        }
+
+        return result;
+    }
+
+    /**
      * Load markets, filter, and persist to database.
      * Prioritizes markets with best profit potential using a scoring algorithm.
      */
     async loadAndPersistMarkets(): Promise<MarketData[]> {
         const rawMarkets = await this.fetchMarkets();
         let filteredMarkets = this.filterMarkets(rawMarkets);
+
+        // CRITICAL: Deduplicate negRisk groups - pick best from each mutually exclusive group
+        filteredMarkets = this.selectBestFromNegRiskGroups(filteredMarkets, rawMarkets);
 
         // Calculate profit score for each market and select the top N
         const topN = configService.get('topNMarkets') || 50;
