@@ -85,7 +85,8 @@ export class CopyTradeDetector {
     private async poll(): Promise<void> {
         const ladderLevels = configService.get('ladderLevels') as number[] || [0.65, 0.70, 0.75, 0.80];
         const minPrice = Math.min(...ladderLevels);
-        const maxPrice = configService.get('maxBuyPrice') as number || 0.84;
+        // For copy trades: accept up to 90% even if signal is late
+        const maxPrice = 0.90;
 
         for (const trader of TRACKED_WALLETS) {
             try {
