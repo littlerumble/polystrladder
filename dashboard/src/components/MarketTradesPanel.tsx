@@ -61,8 +61,9 @@ export default function MarketTradesPanel({ activeTrades, closedTrades }: Market
                             <div className="empty-state">No active trades</div>
                         ) : (
                             activeTrades.map(trade => (
-                                <div key={trade.id} className="trade-row">
+                                <div key={trade.id} className={`trade-row ${trade.isCopyTrade ? 'copy-trade' : ''}`}>
                                     <div className="col-market" title={trade.marketQuestion}>
+                                        {trade.isCopyTrade && <span className="copy-badge" title="Copy Trade">📡</span>}
                                         {trade.marketQuestion?.substring(0, 40) || trade.marketId.substring(0, 12)}...
                                     </div>
                                     <div className="col-side">
@@ -107,10 +108,11 @@ export default function MarketTradesPanel({ activeTrades, closedTrades }: Market
                             <div className="empty-state">No closed trades yet</div>
                         ) : (
                             closedTrades.map(trade => (
-                                <div key={trade.id} className={`trade-row ${trade.isWin ? 'winner' : 'loser'}`}>
+                                <div key={trade.id} className={`trade-row ${trade.isWin ? 'winner' : 'loser'} ${trade.isCopyTrade ? 'copy-trade' : ''}`}>
                                     <div className="col-market" title={trade.marketQuestion}>
                                         <span className="result-icon">{trade.isWin ? '🏆' : '💀'}</span>
-                                        {trade.marketQuestion?.substring(0, 35) || trade.marketId.substring(0, 12)}...
+                                        {trade.isCopyTrade && <span className="copy-badge" title="Copy Trade">📡</span>}
+                                        {trade.marketQuestion?.substring(0, 32) || trade.marketId.substring(0, 12)}...
                                     </div>
                                     <div className="col-side">
                                         <span className={`side-badge ${trade.side.toLowerCase()}`}>

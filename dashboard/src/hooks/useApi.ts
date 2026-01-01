@@ -109,6 +109,7 @@ export interface ActiveTrade {
     currentPrice: number | null;
     unrealizedPnl: number;
     unrealizedPct: number;
+    isCopyTrade?: boolean;  // True if triggered by copy trade signal
     marketQuestion?: string;
     market?: Market;
 }
@@ -128,6 +129,7 @@ export interface ClosedTrade {
     profitLossPct: number;
     isWin: boolean;
     holdTime: number | null;  // In minutes
+    isCopyTrade?: boolean;  // True if triggered by copy trade signal
     marketQuestion?: string;
     exitReason?: string;
 }
