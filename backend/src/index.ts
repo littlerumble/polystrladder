@@ -103,51 +103,28 @@ class TradingBot {
             // Start dashboard server
             this.dashboardServer.start();
 
-            // Load and filter markets
-            const markets = await this.marketLoader.loadAndPersistMarkets();
-            logger.info(`Loaded ${markets.length} eligible markets`);
+            // =============================================
+            // COPY TRADE ONLY MODE - Normal scanning disabled
+            // =============================================
+            logger.info('🔔 COPY TRADE ONLY MODE - Normal market scanning disabled');
 
-            // Build token mappings - CRITICAL: Use outcomes field to correctly map YES/NO tokens
-            for (const market of markets) {
-                // outcomes field determines which token is YES vs NO
-                // clobTokenIds order matches outcomes order
-                const outcomes = market.outcomes;
-                const yesIndex = outcomes.findIndex(o => o.toLowerCase() === 'yes');
-                const noIndex = outcomes.findIndex(o => o.toLowerCase() === 'no');
+            // DISABLED: Load and filter markets
+            // const markets = await this.marketLoader.loadAndPersistMarkets();
+            // logger.info(`Loaded ${markets.length} eligible markets`);
 
-                if (yesIndex !== -1 && noIndex !== -1 && market.clobTokenIds.length >= 2) {
-                    this.marketTokens.set(market.marketId, {
-                        yes: market.clobTokenIds[yesIndex],
-                        no: market.clobTokenIds[noIndex]
-                    });
-                } else {
-                    // Fallback - log warning but continue
-                    logger.warn(`Non-standard outcomes for ${market.marketId}: ${JSON.stringify(outcomes)}`);
-                    this.marketTokens.set(market.marketId, {
-                        yes: market.clobTokenIds[0] || '',
-                        no: market.clobTokenIds[1] || ''
-                    });
-                }
+            // DISABLED: Build token mappings
+            // for (const market of markets) { ... }
 
-                for (const tokenId of market.clobTokenIds) {
-                    this.tokenToMarket.set(tokenId, market.marketId);
-                }
+            // DISABLED: Normal market initialization loop
+            // logger.info(`Initialized ${this.marketStates.size} market states for trading`);
 
-                // CRITICAL: Initialize market state so handlePriceUpdate can process it
-                if (!this.marketStates.has(market.marketId)) {
-                    await this.initializeMarketState(market.marketId);
-                }
-            }
-
-            logger.info(`Initialized ${this.marketStates.size} market states for trading`);
-
-            // Start periodic tasks
-            this.marketLoader.startPeriodicRefresh();
+            // Start only essential periodic tasks
+            // this.marketLoader.startPeriodicRefresh();  // DISABLED
             this.startPnlSnapshots();
             this.startResolutionChecks();
-            this.startGammaPricePolling(); // CRITICAL: Use Gamma prices, not garbage CLOB prices
+            // this.startGammaPricePolling();  // DISABLED
 
-            // Start copy trade detector
+            // Start copy trade detector - THIS IS THE ONLY ENTRY POINT NOW
             this.copyTradeDetector.start();
 
             this.isRunning = true;
@@ -217,7 +194,7 @@ class TradingBot {
             logger.info('WebSocket reconnected, resubscribing...');
         });
 
-        // Handle copy trade signals
+        // Handle copy trade signals - DIRECTLY EXECUTE TRADES
         eventBus.on('copy:signal', async (signal) => {
             logger.info('📋 Copy signal received', {
                 trader: signal.traderName,
@@ -226,68 +203,239 @@ class TradingBot {
                 price: `${(signal.price * 100).toFixed(1)}¢`
             });
 
-            // Check if we already have a position in this market
-            const existingTrade = await this.prisma.marketTrade.findFirst({
-                where: {
-                    market: { id: signal.marketSlug },
-                    status: 'OPEN'
-                }
-            });
+            try {
+                // Check if we already have a position in this market (use conditionId)
+                const existingTrade = await this.prisma.marketTrade.findFirst({
+                    where: {
+                        marketId: signal.conditionId,
+                        status: 'OPEN'
+                    }
+                });
 
-            if (existingTrade) {
-                logger.debug('Skipping copy signal - already have position');
-                return;
-            }
-
-            // Find or fetch the market
-            let market = await this.prisma.market.findFirst({
-                where: { id: signal.marketSlug }
-            });
-
-            if (!market) {
-                // Market not in DB - fetch from Gamma API and add
-                try {
-                    const response = await axios.get(`https://gamma-api.polymarket.com/markets/${signal.conditionId}`);
-                    const gammaMarket = response.data;
-
-                    market = await this.prisma.market.create({
-                        data: {
-                            id: gammaMarket.conditionId,
-                            question: gammaMarket.question || signal.marketTitle,
-                            description: gammaMarket.description || '',
-                            category: gammaMarket.tags?.[0] || 'copy-trade',
-                            outcomes: JSON.stringify(['Yes', 'No']),
-                            clobTokenIds: JSON.stringify(gammaMarket.clobTokenIds || []),
-                            active: true,
-                            volume24h: gammaMarket.volume24hr || 0,
-                            liquidity: gammaMarket.liquidity || 0,
-                            endDate: gammaMarket.endDateIso ? new Date(gammaMarket.endDateIso) : new Date(Date.now() + 86400000)
-                        }
-                    });
-                    logger.info('Added copy trade market to DB', { marketId: market.id });
-                } catch (error) {
-                    logger.error('Failed to fetch market for copy trade', { error: String(error) });
+                if (existingTrade) {
+                    logger.debug('Skipping copy signal - already have position', { marketId: signal.conditionId });
                     return;
                 }
+
+                // Find or create the market in DB
+                let market = await this.prisma.market.findFirst({
+                    where: { id: signal.conditionId }
+                });
+
+                if (!market) {
+                    // Fetch from Gamma API - try multiple approaches since conditionId might not work directly
+                    try {
+                        let gammaMarket: any = null;
+
+                        // Approach 1: Try using the slug if available
+                        if (signal.marketSlug) {
+                            try {
+                                const slugResponse = await axios.get(
+                                    `https://gamma-api.polymarket.com/markets?slug=${encodeURIComponent(signal.marketSlug)}`,
+                                    { timeout: 10000 }
+                                );
+                                if (slugResponse.data && slugResponse.data.length > 0) {
+                                    gammaMarket = slugResponse.data[0];
+                                    logger.info('Found market via slug lookup', { slug: signal.marketSlug });
+                                }
+                            } catch (slugErr) {
+                                logger.debug('Slug lookup failed, trying condition_id', { error: String(slugErr) });
+                            }
+                        }
+
+                        // Approach 2: Search by condition_id
+                        if (!gammaMarket) {
+                            try {
+                                const conditionResponse = await axios.get(
+                                    `https://gamma-api.polymarket.com/markets?condition_id=${signal.conditionId}`,
+                                    { timeout: 10000 }
+                                );
+                                if (conditionResponse.data && conditionResponse.data.length > 0) {
+                                    gammaMarket = conditionResponse.data[0];
+                                    logger.info('Found market via condition_id lookup', { conditionId: signal.conditionId });
+                                }
+                            } catch (condErr) {
+                                logger.debug('Condition ID lookup failed, trying direct lookup', { error: String(condErr) });
+                            }
+                        }
+
+                        // Approach 3: Try direct lookup (might work for some ID formats)
+                        if (!gammaMarket) {
+                            const directResponse = await axios.get(
+                                `https://gamma-api.polymarket.com/markets/${signal.conditionId}`,
+                                { timeout: 10000 }
+                            );
+                            gammaMarket = directResponse.data;
+                        }
+
+                        if (!gammaMarket) {
+                            logger.error('Could not find market via any lookup method', {
+                                conditionId: signal.conditionId,
+                                slug: signal.marketSlug
+                            });
+                            return;
+                        }
+
+                        // Use the signal's conditionId as our market ID for consistency
+                        const marketId = signal.conditionId;
+
+                        // Parse clobTokenIds from Gamma response (it's a JSON string)
+                        let clobTokenIds: string[] = [];
+                        if (gammaMarket.clobTokenIds) {
+                            try {
+                                clobTokenIds = typeof gammaMarket.clobTokenIds === 'string'
+                                    ? JSON.parse(gammaMarket.clobTokenIds)
+                                    : gammaMarket.clobTokenIds;
+                            } catch {
+                                clobTokenIds = [];
+                            }
+                        }
+
+                        // Parse outcomes
+                        let outcomes: string[] = ['Yes', 'No'];
+                        if (gammaMarket.outcomes) {
+                            try {
+                                outcomes = typeof gammaMarket.outcomes === 'string'
+                                    ? JSON.parse(gammaMarket.outcomes)
+                                    : gammaMarket.outcomes;
+                            } catch { }
+                        }
+
+                        // Parse liquidity - ensure it's a number
+                        let liquidityValue: number = 0;
+                        if (gammaMarket.liquidityNum !== undefined) {
+                            liquidityValue = gammaMarket.liquidityNum;
+                        } else if (gammaMarket.liquidity !== undefined) {
+                            liquidityValue = typeof gammaMarket.liquidity === 'number'
+                                ? gammaMarket.liquidity
+                                : parseFloat(String(gammaMarket.liquidity)) || 0;
+                        }
+
+                        market = await this.prisma.market.create({
+                            data: {
+                                id: marketId,
+                                question: gammaMarket.question || signal.marketTitle,
+                                description: gammaMarket.description || '',
+                                category: gammaMarket.category || gammaMarket.tags?.[0] || 'copy-trade',
+                                outcomes: JSON.stringify(outcomes),
+                                clobTokenIds: JSON.stringify(clobTokenIds),
+                                active: true,
+                                volume24h: gammaMarket.volume24hr || gammaMarket.volume24h || 0,
+                                liquidity: liquidityValue,
+                                endDate: gammaMarket.endDate ? new Date(gammaMarket.endDate) : new Date(Date.now() + 86400000)
+                            }
+                        });
+                        logger.info('Added copy trade market to DB', { marketId: market.id });
+
+                        // Also set up token mapping
+                        if (clobTokenIds.length >= 2) {
+                            this.marketTokens.set(market.id, {
+                                yes: clobTokenIds[0],
+                                no: clobTokenIds[1]
+                            });
+                        }
+                    } catch (error) {
+                        logger.error('Failed to fetch market for copy trade', { error: String(error) });
+                        return;
+                    }
+                }
+
+                // Calculate position size (use bankroll-based sizing)
+                // Calculate position size (use bankroll-based sizing)
+                const bankroll = configService.get('bankroll') as number || 1000;
+                const copyPct = configService.get('copyTradePct') as number || 0.05;
+                const copyMax = configService.get('copyTradeMax') as number || 100;
+                const sizePerTrade = Math.min(bankroll * copyPct, copyMax);  // Configurable size (5% / $100 default)
+
+                // Determine the token ID for the outcome we want
+                let tokenId = '';
+                const tokens = this.marketTokens.get(market.id);
+                if (tokens) {
+                    // Use YES token for now (copy trade is always betting on the outcome)
+                    tokenId = tokens.yes;
+                } else {
+                    // Try to get from market data
+                    const clobTokenIds = JSON.parse(market.clobTokenIds);
+                    tokenId = clobTokenIds[0] || '';
+                }
+
+                // Create the order as ProposedOrder for risk check
+                const proposedOrder: ProposedOrder = {
+                    marketId: market.id,
+                    tokenId: tokenId,
+                    side: Side.YES, // Copy trades always buy the YES side of the signaled outcome
+                    price: signal.price,
+                    sizeUsdc: sizePerTrade,
+                    shares: sizePerTrade / signal.price,
+                    strategy: StrategyType.LADDER_COMPRESSION,
+                    strategyDetail: `copy_${signal.traderName}`,
+                    isExit: false,
+                    confidence: 0.9  // High confidence for copy trades
+                };
+
+                // Check with risk manager
+                const riskResult = this.riskManager.checkOrder(proposedOrder);
+                if (!riskResult.approved) {
+                    logger.warn('Copy trade rejected by risk manager', {
+                        marketId: market.id,
+                        reason: riskResult.rejectionReason
+                    });
+                    return;
+                }
+
+                const approvedOrder = riskResult.adjustedOrder || proposedOrder;
+
+                // Convert to Order with timestamp for execution
+                const orderToExecute: Order = {
+                    marketId: approvedOrder.marketId,
+                    tokenId: approvedOrder.tokenId,
+                    side: approvedOrder.side,
+                    price: approvedOrder.price,
+                    sizeUsdc: approvedOrder.sizeUsdc,
+                    shares: approvedOrder.shares,
+                    strategy: approvedOrder.strategy,
+                    strategyDetail: approvedOrder.strategyDetail,
+                    isExit: approvedOrder.isExit,
+                    timestamp: new Date()
+                };
+
+                // Execute the trade
+                const result = await this.executor.execute(orderToExecute);
+
+                if (result.success) {
+                    // Record in risk manager
+                    this.riskManager.recordExecution(approvedOrder, result.filledUsdc, result.filledShares);
+
+                    logger.info('✅ Copy trade executed!', {
+                        trader: signal.traderName,
+                        market: signal.marketTitle.substring(0, 40),
+                        price: `${(signal.price * 100).toFixed(1)}¢`,
+                        size: `$${result.filledUsdc.toFixed(2)}`,
+                        shares: result.filledShares.toFixed(2)
+                    });
+
+                    // Update TrackedMarket status to EXECUTED
+                    await this.prisma.trackedMarket.updateMany({
+                        where: { conditionId: signal.conditionId },
+                        data: {
+                            status: 'EXECUTED',
+                            executedAt: new Date()
+                        }
+                    });
+
+                    // Initialize market state for monitoring
+                    if (!this.marketStates.has(market.id)) {
+                        await this.initializeMarketState(market.id);
+                    }
+                } else {
+                    logger.error('Copy trade execution failed', {
+                        marketId: market.id,
+                        error: result.error
+                    });
+                }
+            } catch (error) {
+                logger.error('Copy signal handler error', { error: String(error) });
             }
-
-            // Initialize market state if not exists
-            if (!this.marketStates.has(market.id)) {
-                await this.initializeMarketState(market.id);
-            }
-
-            // Trigger a price update to process via normal ladder flow
-            const tokens = this.marketTokens.get(market.id);
-            const priceUpdate: PriceUpdate = {
-                marketId: market.id,
-                tokenId: tokens?.yes || '',
-                priceYes: signal.outcome.toLowerCase() === 'yes' ? signal.price : 1 - signal.price,
-                priceNo: signal.outcome.toLowerCase() === 'no' ? signal.price : 1 - signal.price,
-                timestamp: new Date()
-            };
-
-            // Process the update
-            await this.handlePriceUpdate(priceUpdate);
         });
     }
 
@@ -1329,8 +1477,13 @@ class TradingBot {
                 const marketData = response.data;
 
                 if (marketData.outcomePrices) {
-                    const prices = JSON.parse(marketData.outcomePrices);
-                    const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+                    const prices = typeof marketData.outcomePrices === 'string'
+                        ? JSON.parse(marketData.outcomePrices)
+                        : marketData.outcomePrices;
+
+                    const outcomes = marketData.outcomes && typeof marketData.outcomes === 'string'
+                        ? JSON.parse(marketData.outcomes)
+                        : (marketData.outcomes || ['Yes', 'No']);
                     const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
                     const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
 

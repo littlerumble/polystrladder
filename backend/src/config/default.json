@@ -475,8 +475,12 @@
     "ladderLevels": [
         0.65,
         0.70,
+        0.75,
         0.80
     ],
+    "copyTradePct": 0.05,
+    "copyTradeMax": 100,
+    "maxExposurePerMarket": 50,
     "maxBuyPrice": 0.84,
     "tailPriceThreshold": 0.05,
     "tailExposurePct": 0.0075,

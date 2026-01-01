@@ -112,10 +112,7 @@ function App() {
                 {/* Tab Content */}
                 <section className="tab-content animate-fade-in">
                     {activeTab === 'scanner' && (
-                        <MarketScanner
-                            markets={api.markets}
-                            marketStates={api.marketStates}
-                        />
+                        <MarketScanner />
                     )}
                     {activeTab === 'positions' && (
                         <Positions positions={api.positions} />

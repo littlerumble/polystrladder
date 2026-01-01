@@ -16,7 +16,9 @@ const DATA_API_BASE = 'https://data-api.polymarket.com';
 // Tracked traders
 const TRACKED_WALLETS = [
     { wallet: '0x2005d16a84ceefa912d4e380cd32e7ff827875ea', name: 'RN1' },
-    { wallet: '0xc65ca4755436f82d8eb461e65781584b8cadea39', name: 'LOOKINGBACK' }
+    { wallet: '0xc65ca4755436f82d8eb461e65781584b8cadea39', name: 'LOOKINGBACK' },
+    { wallet: '0x5350afcd8bd8ceffdf4da32420d6d31be0822fda', name: 'TRADER3' },
+    { wallet: '0x5388bc8cb72eb19a3bec0e8f3db6a77f7cd54d5a', name: 'TRADER4' }
 ];
 
 export interface CopySignal {
@@ -64,8 +66,8 @@ export class CopyTradeDetector {
         // Initial poll
         this.poll();
 
-        // Poll every 10 seconds
-        this.pollInterval = setInterval(() => this.poll(), 10000);
+        // Poll every 2 seconds for fast copy trading
+        this.pollInterval = setInterval(() => this.poll(), 2000);
     }
 
     /**
@@ -85,7 +87,6 @@ export class CopyTradeDetector {
     private async poll(): Promise<void> {
         const ladderLevels = configService.get('ladderLevels') as number[] || [0.65, 0.70, 0.75, 0.80];
         const minPrice = Math.min(...ladderLevels);
-        // For copy trades: accept up to 90% even if signal is late
         const maxPrice = 0.90;
 
         for (const trader of TRACKED_WALLETS) {
@@ -95,13 +96,17 @@ export class CopyTradeDetector {
                 // Get last seen timestamp for this trader
                 const lastSeen = this.lastSeenTimestamp.get(trader.wallet) || 0;
 
-                // Find new BUY trades in our price bucket
-                const newSignals = trades.filter(t =>
+                // Find ALL new BUY trades (recent within 24h)
+                const now = Math.floor(Date.now() / 1000);
+                const oneDayAgo = now - 86400;
+
+                const newTrades = trades.filter(t =>
                     t.side === 'BUY' &&
                     t.timestamp > lastSeen &&
-                    t.price >= minPrice &&
-                    t.price <= maxPrice
+                    t.timestamp > oneDayAgo
                 );
+
+
 
                 // Update last seen timestamp
                 if (trades.length > 0) {
@@ -109,28 +114,82 @@ export class CopyTradeDetector {
                     this.lastSeenTimestamp.set(trader.wallet, maxTs);
                 }
 
-                // Emit signals for new trades
-                for (const trade of newSignals) {
-                    const signal: CopySignal = {
-                        traderName: trader.name,
-                        traderWallet: trader.wallet,
-                        conditionId: trade.conditionId,
-                        marketSlug: trade.slug,
-                        marketTitle: trade.title,
-                        outcome: trade.outcome,
-                        price: trade.price,
-                        timestamp: trade.timestamp
-                    };
-
-                    logger.info('🔔 Copy signal detected', {
-                        trader: trader.name,
-                        market: trade.title.substring(0, 50),
-                        outcome: trade.outcome,
-                        price: `${(trade.price * 100).toFixed(1)}¢`
+                // Process each new trade
+                for (const trade of newTrades) {
+                    // Check if already tracked
+                    const existing = await this.prisma.trackedMarket.findUnique({
+                        where: { conditionId: trade.conditionId }
                     });
 
-                    // Emit signal for main loop to pick up
-                    eventBus.emit('copy:signal', signal);
+                    if (existing) {
+                        continue;
+                    }
+
+                    // CRITICAL FIX: Fetch CURRENT price. If fails, DO NOT TRADE.
+                    const currentPrice = await this.fetchCurrentPrice(trade.conditionId, trade.outcome, trade.slug);
+
+                    if (currentPrice === null) {
+                        logger.warn(`⚠️ Could not fetch current price for ${trade.title}, skipping copy trade.`, {
+                            conditionId: trade.conditionId,
+                            slug: trade.slug
+                        });
+                        continue;
+                    }
+
+                    // Judge based on CURRENT price
+                    const priceToCheck = currentPrice;
+
+                    // Judge based on CURRENT price
+                    const inRange = priceToCheck >= minPrice && priceToCheck <= maxPrice;
+                    const status = inRange ? 'IN_RANGE' : 'WATCHING';
+
+                    // Store in TrackedMarket table
+                    await this.prisma.trackedMarket.create({
+                        data: {
+                            conditionId: trade.conditionId,
+                            slug: trade.slug,           // Store slug
+                            title: trade.title,
+                            outcome: trade.outcome,
+                            traderName: trader.name,
+                            traderWallet: trader.wallet,
+                            trackedPrice: trade.price,     // Original trader entry
+                            currentPrice: priceToCheck,    // Current market price
+                            status: status,
+                            signalTime: new Date(trade.timestamp * 1000),
+                            enteredRangeAt: inRange ? new Date() : null
+                        }
+                    });
+
+                    logger.info(`👁️ Tracked market added: ${status}`, {
+                        trader: trader.name,
+                        market: trade.title.substring(0, 40),
+                        outcome: trade.outcome,
+                        traderPrice: `${(trade.price * 100).toFixed(1)}¢`,
+                        currentPrice: `${(priceToCheck * 100).toFixed(1)}¢`,
+                        inRange
+                    });
+
+                    // If in range (CURRENT PRICE), emit copy signal to execute
+                    if (inRange) {
+                        const signal: CopySignal = {
+                            traderName: trader.name,
+                            traderWallet: trader.wallet,
+                            conditionId: trade.conditionId,
+                            marketSlug: trade.slug,
+                            marketTitle: trade.title,
+                            outcome: trade.outcome,
+                            price: priceToCheck, // Use CURRENT price for execution
+                            timestamp: trade.timestamp
+                        };
+
+                        logger.info('🔔 Copy signal - IN RANGE (Current Price), executing!', {
+                            trader: trader.name,
+                            market: trade.title.substring(0, 40),
+                            price: `${(priceToCheck * 100).toFixed(1)}¢`
+                        });
+
+                        eventBus.emit('copy:signal', signal);
+                    }
                 }
 
             } catch (error) {
@@ -139,6 +198,142 @@ export class CopyTradeDetector {
                     error: String(error)
                 });
             }
+        }
+
+        // Also check WATCHING markets for price entry into range
+        await this.checkWatchingMarkets(minPrice, maxPrice);
+    }
+
+    /**
+     * Check WATCHING markets for price entry into our range.
+     */
+    private async checkWatchingMarkets(minPrice: number, maxPrice: number): Promise<void> {
+        const watchingMarkets = await this.prisma.trackedMarket.findMany({
+            where: { status: 'WATCHING' }
+        });
+
+        for (const tracked of watchingMarkets) {
+            try {
+                // Fetch current price correctly handling outcome
+                const currentPrice = await this.fetchCurrentPrice(tracked.conditionId, tracked.outcome, tracked.slug);
+
+                if (currentPrice === null) continue;
+
+                // Update current price
+                await this.prisma.trackedMarket.update({
+                    where: { id: tracked.id },
+                    data: { currentPrice }
+                });
+
+                // Check if price entered our range
+                if (currentPrice >= minPrice && currentPrice <= maxPrice) {
+                    // Update status
+                    await this.prisma.trackedMarket.update({
+                        where: { id: tracked.id },
+                        data: {
+                            status: 'IN_RANGE',
+                            currentPrice,
+                            enteredRangeAt: new Date()
+                        }
+                    });
+
+                    logger.info('🎯 Tracked market entered range!', {
+                        market: tracked.title.substring(0, 40),
+                        previousPrice: `${(tracked.trackedPrice * 100).toFixed(1)}¢`,
+                        currentPrice: `${(currentPrice * 100).toFixed(1)}¢`
+                    });
+
+                    // Emit copy signal
+                    const signal: CopySignal = {
+                        traderName: tracked.traderName,
+                        traderWallet: tracked.traderWallet,
+                        conditionId: tracked.conditionId,
+                        marketSlug: tracked.slug,
+                        marketTitle: tracked.title,
+                        outcome: tracked.outcome,
+                        price: currentPrice,
+                        timestamp: Date.now() / 1000
+                    };
+
+                    eventBus.emit('copy:signal', signal);
+                }
+            } catch (error) {
+                // Silently continue on fetch errors
+            }
+        }
+    }
+
+    /**
+     * Helper to fetch current price for a specific outcome safely.
+     * Uses Gamma Markets/Events API via slug to find the market.
+     */
+    private async fetchCurrentPrice(conditionId: string, outcome: string, slug?: string): Promise<number | null> {
+        try {
+            let gammaMarket = null;
+
+            // 1. Try fetching by SLUG (Markets API) - Most precise if slug is Market Slug
+            if (slug) {
+                try {
+                    const response = await axios.get(`https://gamma-api.polymarket.com/markets?slug=${slug}`);
+                    if (Array.isArray(response.data) && response.data.length > 0) {
+                        // Find specific market if multiple (unlikely for slug) or just take first matching conditionId
+                        gammaMarket = response.data.find((m: any) => m.conditionId === conditionId);
+                        if (!gammaMarket) gammaMarket = response.data[0]; // Fallback to first if conditionId not found (unlikely)
+                    }
+                } catch (e) {
+                    // Ignore
+                }
+
+                // 2. Fallback: Try fetching by SLUG (Events API) - If slug is Event Slug
+                if (!gammaMarket) {
+                    try {
+                        const response = await axios.get(`https://gamma-api.polymarket.com/events?slug=${slug}`);
+                        if (Array.isArray(response.data) && response.data.length > 0) {
+                            const event = response.data[0];
+                            if (event.markets && Array.isArray(event.markets)) {
+                                gammaMarket = event.markets.find((m: any) => m.conditionId === conditionId);
+                            }
+                        }
+                    } catch (e) {
+                        // Ignore
+                    }
+                }
+            }
+
+            // 3. Fallback: Try fetching by Condition ID directly (Gamma API usually fails this, but keeps it as last resort)
+            if (!gammaMarket) {
+                try {
+                    const response = await axios.get(`https://gamma-api.polymarket.com/markets/${conditionId}`);
+                    gammaMarket = response.data;
+                } catch (e) {
+                    // Fail
+                }
+            }
+
+            if (!gammaMarket || !gammaMarket.outcomePrices) return null;
+
+            const prices = typeof gammaMarket.outcomePrices === 'string'
+                ? JSON.parse(gammaMarket.outcomePrices)
+                : gammaMarket.outcomePrices;
+
+            const outcomes = gammaMarket.outcomes && typeof gammaMarket.outcomes === 'string'
+                ? JSON.parse(gammaMarket.outcomes)
+                : (gammaMarket.outcomes || ['Yes', 'No']);
+
+            // Find index of outcome
+            const index = outcomes.findIndex((o: string) => o.toLowerCase() === outcome.toLowerCase());
+
+            if (index !== -1 && prices[index] !== undefined) {
+                return parseFloat(prices[index]);
+            }
+
+            // Fallback for simple Yes/No if outcomes not found or matching
+            if (outcome.toLowerCase() === 'yes' && prices[0] !== undefined) return parseFloat(prices[0]);
+            if (outcome.toLowerCase() === 'no' && prices[1] !== undefined) return parseFloat(prices[1]);
+
+            return null;
+        } catch (error) {
+            return null;
         }
     }
 

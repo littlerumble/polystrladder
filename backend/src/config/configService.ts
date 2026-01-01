@@ -20,6 +20,8 @@ export interface Config {
     minLiquidity: number;
     maxTimeToResolutionHours: number;
     ladderLevels: number[];
+    copyTradePct: number;
+    copyTradeMax: number;
     maxBuyPrice: number;
     tailPriceThreshold: number;
     tailExposurePct: number;

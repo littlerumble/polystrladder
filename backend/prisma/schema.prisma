@@ -178,3 +178,26 @@ model BotConfig {
   lockedProfits   Float    @default(0)      // Realized profits locked away (never reinvested)
   updatedAt       DateTime @updatedAt
 }
+
+// Markets being watched from tracked traders
+model TrackedMarket {
+  id              Int       @id @default(autoincrement())
+  conditionId     String    @unique  // Polymarket condition ID
+  marketId        String?   // FK to Market if synced
+  slug            String    // Event slug
+  title           String    @db.Text
+  outcome         String    // Which outcome the tracker bought
+  traderName      String
+  traderWallet    String
+  trackedPrice    Float     // Price when tracker bought
+  currentPrice    Float?    // Latest price
+  status          String    @default("WATCHING") // WATCHING, IN_RANGE, EXECUTED, EXPIRED
+  signalTime      DateTime  // When tracker originally bought
+  enteredRangeAt  DateTime? // When price entered our 65-90% range
+  executedAt      DateTime? // When we executed
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([status])
+  @@index([traderName])
+}

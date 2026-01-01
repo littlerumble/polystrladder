@@ -459,7 +459,8 @@ export class RiskManager {
                         currentShares: filledShares,
                         profitLoss: 0,
                         profitLossPct: 0,
-                        unrealizedPnl: 0
+                        unrealizedPnl: 0,
+                        isCopyTrade: order.strategyDetail?.startsWith('copy_') || false
                     }
                 });
 

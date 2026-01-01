@@ -157,6 +157,23 @@ export interface Config {
     allowedCategories: string[];
 }
 
+// Markets being watched from tracked traders
+export interface TrackedMarket {
+    id: number;
+    conditionId: string;
+    marketId?: string;
+    title: string;
+    outcome: string;
+    traderName: string;
+    traderWallet: string;
+    trackedPrice: number;
+    currentPrice?: number;
+    status: 'WATCHING' | 'IN_RANGE' | 'EXECUTED' | 'EXPIRED';
+    signalTime: string;
+    enteredRangeAt?: string;
+    executedAt?: string;
+}
+
 interface DashboardUpdate {
     type: string;
     data: unknown;

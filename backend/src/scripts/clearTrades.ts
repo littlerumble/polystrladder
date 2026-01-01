@@ -59,13 +59,15 @@ async function clearTrades() {
         const states = await prisma.marketState.deleteMany();
         console.log(`  ✓ Deleted ${states.count} records`);
 
+        console.log('Deleting Market...');
+        const markets = await prisma.market.deleteMany();
+        console.log(`  ✓ Deleted ${markets.count} records`);
+
         // Show what's preserved
-        const marketCount = await prisma.market.count();
         const configCount = await prisma.botConfig.count();
 
-        console.log('\n✅ Trading data cleared!\n');
+        console.log('\n✅ ALL trading data cleared including markets!\\n');
         console.log('📊 Preserved:');
-        console.log(`  - ${marketCount} markets`);
         console.log(`  - ${configCount} bot config(s)`);
 
     } catch (error) {

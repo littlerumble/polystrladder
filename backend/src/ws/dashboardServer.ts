@@ -547,6 +547,19 @@ export class DashboardServer {
             }
         });
 
+        // Get tracked markets from tracked traders
+        this.app.get('/api/tracked-markets', async (_, res) => {
+            try {
+                const trackedMarkets = await this.prisma.trackedMarket.findMany({
+                    orderBy: { signalTime: 'desc' }
+                });
+
+                res.json(trackedMarkets);
+            } catch (error) {
+                res.status(500).json({ error: String(error) });
+            }
+        });
+
         // Get P&L history
         this.app.get('/api/pnl', async (req, res) => {
             try {

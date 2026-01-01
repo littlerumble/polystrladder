@@ -1,141 +1,138 @@
-import { Market, MarketState } from '../hooks/useApi';
+import { useState, useEffect } from 'react';
+import { TrackedMarket } from '../hooks/useApi';
 import './MarketScanner.css';
 
-interface EnrichedMarket extends Market {
-    priceYes?: number;
-    priceNo?: number;
-    pricePct?: string;
-    entryCue?: string;
-    regime?: string;
-}
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-interface MarketScannerProps {
-    markets: EnrichedMarket[];
-    marketStates: MarketState[];
-}
-
-function getRegimeColor(regime: string): string {
-    switch (regime) {
-        case 'LATE_COMPRESSED': return 'var(--accent-green)';
-        case 'HIGH_VOLATILITY': return 'var(--accent-orange)';
-        case 'EARLY_UNCERTAIN': return 'var(--accent-purple)';
-        case 'MID_CONSENSUS': return 'var(--accent-blue)';
-        default: return 'var(--text-muted)';
+function getStatusIcon(status: string): string {
+    switch (status) {
+        case 'IN_RANGE': return '🎯';
+        case 'WATCHING': return '👁️';
+        case 'EXECUTED': return '✅';
+        default: return '⏸️';
     }
 }
 
-function getRegimeLabel(regime: string): string {
-    switch (regime) {
-        case 'LATE_COMPRESSED': return 'Late';
-        case 'HIGH_VOLATILITY': return 'Volatile';
-        case 'EARLY_UNCERTAIN': return 'Early';
-        case 'MID_CONSENSUS': return 'Consensus';
-        default: return regime || 'Unknown';
-    }
+function formatTime(dateStr: string): string {
+    const date = new Date(dateStr);
+    return date.toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
 }
 
-function formatTimeRemaining(endDate: string): string {
-    const end = new Date(endDate);
-    const now = new Date();
-    const diff = end.getTime() - now.getTime();
+export default function MarketScanner() {
+    const [trackedMarkets, setTrackedMarkets] = useState<TrackedMarket[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [filter, setFilter] = useState<'all' | 'watching' | 'in_range'>('all');
 
-    if (diff < 0) return 'Ended';
+    useEffect(() => {
+        const fetchTrackedMarkets = async () => {
+            try {
+                const res = await fetch(`${API_URL}/api/tracked-markets`);
+                if (res.ok) {
+                    const data = await res.json();
+                    setTrackedMarkets(data);
+                }
+            } catch (error) {
+                console.error('Failed to fetch tracked markets:', error);
+            } finally {
+                setLoading(false);
+            }
+        };
 
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        fetchTrackedMarkets();
+        const interval = setInterval(fetchTrackedMarkets, 5000);  // Refresh every 5s
+        return () => clearInterval(interval);
+    }, []);
 
-    if (hours > 24) {
-        const days = Math.floor(hours / 24);
-        return `${days}d ${hours % 24}h`;
+    const filteredMarkets = trackedMarkets.filter(m => {
+        if (filter === 'all') return true;
+        if (filter === 'watching') return m.status === 'WATCHING';
+        if (filter === 'in_range') return m.status === 'IN_RANGE';
+        return true;
+    });
+
+    if (loading) {
+        return <div className="empty-state"><p>Loading tracked markets...</p></div>;
     }
 
-    return `${hours}h ${minutes}m`;
-}
-
-export default function MarketScanner({ markets, marketStates }: MarketScannerProps) {
-    const stateMap = new Map(marketStates.map(s => [s.marketId, s]));
-
-    if (markets.length === 0) {
+    if (trackedMarkets.length === 0) {
         return (
             <div className="empty-state">
-                <p>No markets loaded yet. Waiting for market data...</p>
+                <p>No tracked markets yet. Waiting for tracked traders to buy...</p>
             </div>
         );
     }
 
     return (
         <div className="market-scanner">
+            <div className="filter-buttons">
+                <button
+                    className={`filter-btn ${filter === 'all' ? 'active' : ''}`}
+                    onClick={() => setFilter('all')}
+                >
+                    All ({trackedMarkets.length})
+                </button>
+                <button
+                    className={`filter-btn ${filter === 'watching' ? 'active' : ''}`}
+                    onClick={() => setFilter('watching')}
+                >
+                    👁️ Watching ({trackedMarkets.filter(m => m.status === 'WATCHING').length})
+                </button>
+                <button
+                    className={`filter-btn ${filter === 'in_range' ? 'active' : ''}`}
+                    onClick={() => setFilter('in_range')}
+                >
+                    🎯 In Range ({trackedMarkets.filter(m => m.status === 'IN_RANGE').length})
+                </button>
+            </div>
+
             <div className="scanner-header">
+                <span className="col-status-icon"></span>
                 <span className="col-market">Market</span>
-                <span className="col-price">YES Price</span>
-                <span className="col-regime">Regime</span>
-                <span className="col-entry">Entry Cue</span>
-                <span className="col-time">Time Left</span>
-                <span className="col-status">Status</span>
+                <span className="col-trader">Tracker</span>
+                <span className="col-price">Entry</span>
+                <span className="col-current">Current</span>
+                <span className="col-time">Signal Time</span>
             </div>
             <div className="scanner-body">
-                {markets.map(market => {
-                    const state = stateMap.get(market.id);
-                    const filledCount = state ? JSON.parse(state.ladderFilled || '[]').length : 0;
-                    // Use new fields from enhanced API, fallback to old state
-                    const regime = market.regime || state?.regime || 'Unknown';
-                    const priceDisplay = market.pricePct || (market.priceYes ? `${(market.priceYes * 100).toFixed(1)}%` : '...');
-                    const entryDisplay = market.entryCue || 'Loading...';
+                {filteredMarkets.map(market => {
+                    const priceInRange = (market.currentPrice || 0) >= 0.65 && (market.currentPrice || 0) <= 0.90;
 
                     return (
-                        <div key={market.id} className="scanner-row">
+                        <div key={market.id} className={`scanner-row ${market.status.toLowerCase()}`}>
+                            <div className="col-status-icon">
+                                {getStatusIcon(market.status)}
+                            </div>
                             <div className="col-market">
-                                <span className="market-question" title={market.question}>
-                                    {market.question.length > 50
-                                        ? market.question.substring(0, 50) + '...'
-                                        : market.question}
+                                <span className="market-question" title={market.title}>
+                                    {market.title.length > 45
+                                        ? market.title.substring(0, 45) + '...'
+                                        : market.title}
                                 </span>
+                                <span className="outcome-tag">{market.outcome}</span>
+                            </div>
+                            <div className="col-trader">
+                                <span className="trader-name">{market.traderName}</span>
                             </div>
                             <div className="col-price">
-                                <span className="price-badge" style={{
-                                    color: market.priceYes && market.priceYes >= 0.65
-                                        ? 'var(--accent-green)'
-                                        : 'var(--text-muted)'
-                                }}>
-                                    {priceDisplay}
+                                <span className="price-badge">
+                                    {(market.trackedPrice * 100).toFixed(1)}¢
                                 </span>
                             </div>
-                            <div className="col-regime">
+                            <div className="col-current">
                                 <span
-                                    className="regime-badge"
-                                    style={{
-                                        background: `${getRegimeColor(regime)}20`,
-                                        color: getRegimeColor(regime),
-                                        borderColor: `${getRegimeColor(regime)}40`
-                                    }}
+                                    className="price-badge"
+                                    style={{ color: priceInRange ? 'var(--accent-green)' : 'var(--text-muted)' }}
                                 >
-                                    {getRegimeLabel(regime)}
-                                </span>
-                            </div>
-                            <div className="col-entry">
-                                <span className="entry-cue" title={entryDisplay}>
-                                    {entryDisplay.length > 30 ? entryDisplay.substring(0, 30) + '...' : entryDisplay}
+                                    {market.currentPrice ? `${(market.currentPrice * 100).toFixed(1)}¢` : '-'}
                                 </span>
                             </div>
                             <div className="col-time">
-                                {formatTimeRemaining(market.endDate)}
-                            </div>
-                            <div className="col-status">
-                                {filledCount > 0 && (
-                                    <span className="status-badge active">
-                                        L{filledCount}
-                                    </span>
-                                )}
-                                {state?.tailActive && (
-                                    <span className="status-badge tail">
-                                        Tail
-                                    </span>
-                                )}
-                                {!filledCount && !state?.tailActive && (
-                                    <span className="status-badge watching">
-                                        Watching
-                                    </span>
-                                )}
+                                {formatTime(market.signalTime)}
                             </div>
                         </div>
                     );
