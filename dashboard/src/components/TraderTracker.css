@@ -59,7 +59,7 @@
 
 .table-header {
     display: grid;
-    grid-template-columns: 2fr 0.7fr 0.7fr 0.7fr 0.7fr 1.2fr;
+    grid-template-columns: 0.8fr 2fr 0.6fr 0.6fr 0.6fr 0.6fr 1.1fr;
     padding: 12px 20px;
     background: rgba(0, 0, 0, 0.2);
     font-size: 12px;
@@ -71,7 +71,7 @@
 
 .table-row {
     display: grid;
-    grid-template-columns: 2fr 0.7fr 0.7fr 0.7fr 0.7fr 1.2fr;
+    grid-template-columns: 0.8fr 2fr 0.6fr 0.6fr 0.6fr 0.6fr 1.1fr;
     padding: 12px 20px;
     border-bottom: 1px solid var(--border-color);
     align-items: center;
@@ -102,6 +102,20 @@
 .market-title {
     font-size: 13px;
     color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.col-trader {
+    display: flex;
+    align-items: center;
+}
+
+.trader-badge {
+    font-size: 11px;
+    color: var(--accent-purple);
+    font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

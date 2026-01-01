@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
 import './TraderTracker.css';
 
-// Hardcoded wallet to track
-const TRACKED_WALLET = '0x2005d16a84ceefa912d4e380cd32e7ff827875ea';
+// Wallets to track
+const TRACKED_WALLETS = [
+    '0x2005d16a84ceefa912d4e380cd32e7ff827875ea',
+    '0xc65ca4755436f82d8eb461e65781584b8cadea39'
+];
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 interface TrackedPosition {
@@ -19,6 +22,7 @@ interface TrackedPosition {
     cashPnl: number;
     percentPnl: number;
     endDate: string;
+    traderName?: string;  // Added to identify which trader
 }
 
 interface TraderData {
@@ -43,17 +47,52 @@ function formatCurrency(value: number): string {
 }
 
 export default function TraderTracker() {
-    const [data, setData] = useState<TraderData | null>(null);
+    const [allPositions, setAllPositions] = useState<TrackedPosition[]>([]);
+    const [traders, setTraders] = useState<Map<string, string>>(new Map());  // wallet -> pseudonym
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+    const [totalPnl, setTotalPnl] = useState(0);
+    const [totalValue, setTotalValue] = useState(0);
 
     const fetchData = async () => {
         try {
-            const response = await fetch(`${API_BASE}/api/tracked-positions/${TRACKED_WALLET}`);
-            if (!response.ok) throw new Error('Failed to fetch');
-            const result = await response.json();
-            setData(result);
+            // Fetch all wallets in parallel
+            const results = await Promise.all(
+                TRACKED_WALLETS.map(wallet =>
+                    fetch(`${API_BASE}/api/tracked-positions/${wallet}`)
+                        .then(res => res.ok ? res.json() : null)
+                        .catch(() => null)
+                )
+            );
+
+            // Combine all positions, adding trader name to each
+            const combined: TrackedPosition[] = [];
+            const traderMap = new Map<string, string>();
+            let pnlSum = 0;
+            let valueSum = 0;
+
+            results.forEach((data: TraderData | null, idx) => {
+                if (data && data.positions) {
+                    const traderName = data.trader?.pseudonym || `Trader ${idx + 1}`;
+                    traderMap.set(TRACKED_WALLETS[idx], traderName);
+
+                    data.positions.forEach(pos => {
+                        combined.push({
+                            ...pos,
+                            traderName
+                        });
+                    });
+
+                    pnlSum += data.totalPnl || 0;
+                    valueSum += data.totalValue || 0;
+                }
+            });
+
+            setAllPositions(combined);
+            setTraders(traderMap);
+            setTotalPnl(pnlSum);
+            setTotalValue(valueSum);
             setLastUpdate(new Date());
             setError(null);
         } catch (err) {
@@ -75,7 +114,7 @@ export default function TraderTracker() {
         return (
             <div className="trader-tracker">
                 <div className="tracker-header">
-                    <h3>📡 Tracked Trader</h3>
+                    <h3>📡 Tracked Traders</h3>
                 </div>
                 <div className="loading">Loading...</div>
             </div>
@@ -86,29 +125,27 @@ export default function TraderTracker() {
         return (
             <div className="trader-tracker">
                 <div className="tracker-header">
-                    <h3>📡 Tracked Trader</h3>
+                    <h3>📡 Tracked Traders</h3>
                 </div>
                 <div className="error">{error}</div>
             </div>
         );
     }
 
-    const positions = data?.positions || [];
+    const traderNames = Array.from(traders.values()).join(', ');
 
     return (
         <div className="trader-tracker">
             <div className="tracker-header">
                 <div className="header-left">
-                    <h3>📡 Tracked Trader</h3>
-                    {data?.trader && (
-                        <span className="trader-name">
-                            {data.trader.pseudonym}
-                        </span>
-                    )}
+                    <h3>📡 Tracked Traders</h3>
+                    <span className="trader-name">
+                        {traderNames || 'No traders'}
+                    </span>
                 </div>
                 <div className="header-right">
-                    <span className="total-pnl" style={{ color: (data?.totalPnl || 0) >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
-                        {(data?.totalPnl || 0) >= 0 ? '+' : ''}{formatCurrency(data?.totalPnl || 0)}
+                    <span className="total-pnl" style={{ color: totalPnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                        {totalPnl >= 0 ? '+' : ''}{formatCurrency(totalPnl)}
                     </span>
                     {lastUpdate && (
                         <span className="last-update">
@@ -118,7 +155,7 @@ export default function TraderTracker() {
                 </div>
             </div>
 
-            {positions.length === 0 ? (
+            {allPositions.length === 0 ? (
                 <div className="empty-state">
                     <p>No active positions</p>
                 </div>
@@ -126,6 +163,7 @@ export default function TraderTracker() {
                 <div className="tracker-body">
                     <div className="tracker-table">
                         <div className="table-header">
+                            <span className="col-trader">Trader</span>
                             <span className="col-market">Market</span>
                             <span className="col-side">Side</span>
                             <span className="col-size">Shares</span>
@@ -133,12 +171,15 @@ export default function TraderTracker() {
                             <span className="col-current">Current</span>
                             <span className="col-pnl">P&L</span>
                         </div>
-                        {positions.map((pos, idx) => (
+                        {allPositions.map((pos, idx) => (
                             <div key={idx} className="table-row">
+                                <div className="col-trader">
+                                    <span className="trader-badge">{pos.traderName?.substring(0, 12)}</span>
+                                </div>
                                 <div className="col-market">
                                     <img src={pos.icon} alt="" className="market-icon" />
                                     <span className="market-title" title={pos.title}>
-                                        {pos.title.length > 40 ? pos.title.substring(0, 40) + '...' : pos.title}
+                                        {pos.title.length > 35 ? pos.title.substring(0, 35) + '...' : pos.title}
                                     </span>
                                 </div>
                                 <div className="col-side">
@@ -171,12 +212,16 @@ export default function TraderTracker() {
 
             <div className="tracker-footer">
                 <span className="footer-item">
+                    <span className="label">Traders:</span>
+                    <span className="value">{traders.size}</span>
+                </span>
+                <span className="footer-item">
                     <span className="label">Positions:</span>
-                    <span className="value">{positions.length}</span>
+                    <span className="value">{allPositions.length}</span>
                 </span>
                 <span className="footer-item">
                     <span className="label">Value:</span>
-                    <span className="value">{formatCurrency(data?.totalValue || 0)}</span>
+                    <span className="value">{formatCurrency(totalValue)}</span>
                 </span>
             </div>
         </div>
