@@ -258,14 +258,19 @@ export default function TraderTracker() {
             // Fetch tracked trader activity
             const results = await Promise.all(
                 TRACKED_TRADERS.map(async (trader) => {
-                    const res = await fetch(`${API_BASE}/api/tracked-activity/${trader.wallet}?limit=100`);
-                    if (!res.ok) return [];
-                    const data = await res.json();
-                    return (data.trades || []).map((t: any) => ({
-                        ...t,
-                        traderName: trader.displayName,
-                        traderWallet: trader.wallet
-                    }));
+                    try {
+                        const res = await fetch(`${API_BASE}/api/tracked-activity/${trader.wallet}?limit=100`);
+                        if (!res.ok) return [];
+                        const data = await res.json();
+                        return (data.trades || []).map((t: any) => ({
+                            ...t,
+                            traderName: trader.displayName,
+                            traderWallet: trader.wallet
+                        }));
+                    } catch (e) {
+                        console.error(`Failed to fetch ${trader.displayName}`, e);
+                        return [];
+                    }
                 })
             );
 

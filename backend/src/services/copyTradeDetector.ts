@@ -343,14 +343,14 @@ export class CopyTradeDetector {
      * Fetch recent trades from Polymarket API.
      */
     private async fetchRecentTrades(wallet: string): Promise<TradeActivity[]> {
-        // Fetch last 5 minutes of activity
-        const fiveMinutesAgo = Math.floor(Date.now() / 1000) - (5 * 60);
+        // Fetch last 24 hours of activity to catch up on missed trades
+        const lookback = Math.floor(Date.now() / 1000) - 86400;
 
         const response = await axios.get(`${DATA_API_BASE}/activity`, {
             params: {
                 user: wallet,
                 limit: 50,
-                startTs: fiveMinutesAgo
+                startTs: lookback
             },
             timeout: 10000
         });
