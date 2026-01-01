@@ -5,9 +5,7 @@
     "maxSingleOrderPct": 0.02,
     "topNMarkets": 250,
     "maxActivePositions": 20,
-    "allowedCategories": [
-        "Sports"
-    ],
+    "allowedCategories": [],
     "excludedCategories": [
         "Governance",
         "Politics",
