@@ -6,6 +6,7 @@ import axios from 'axios';
 import { configService } from '../config/configService.js';
 import { createLogger } from '../core/logger.js';
 import eventBus from '../core/eventBus.js';
+import { fetchTrackedPositions, fetchTraderProfile } from './traderTracker.js';
 import {
     DashboardUpdate,
     PriceUpdate,
@@ -692,6 +693,34 @@ export class DashboardServer {
                 });
 
                 res.json(prices.reverse());
+            } catch (error) {
+                res.status(500).json({ error: String(error) });
+            }
+        });
+
+        // Get tracked trader's active positions
+        this.app.get('/api/tracked-positions/:wallet', async (req, res) => {
+            try {
+                const { wallet } = req.params;
+
+                // Fetch positions and profile in parallel
+                const [positions, profile] = await Promise.all([
+                    fetchTrackedPositions(wallet),
+                    fetchTraderProfile(wallet)
+                ]);
+
+                // Filter to only active positions (with shares and current price)
+                const activePositions = positions.filter(p =>
+                    p.size > 0 && p.curPrice > 0
+                );
+
+                res.json({
+                    trader: profile,
+                    positions: activePositions,
+                    totalPositions: activePositions.length,
+                    totalValue: activePositions.reduce((sum, p) => sum + p.currentValue, 0),
+                    totalPnl: activePositions.reduce((sum, p) => sum + p.cashPnl, 0)
+                });
             } catch (error) {
                 res.status(500).json({ error: String(error) });
             }

@@ -11,6 +11,7 @@ import TradeHistory from './components/TradeHistory';
 import StrategyEvents from './components/StrategyEvents';
 import DecisionPanel from './components/DecisionPanel';
 import MarketTradesPanel from './components/MarketTradesPanel';
+import TraderTracker from './components/TraderTracker';
 
 type TabType = 'scanner' | 'positions' | 'trades' | 'm-trades' | 'strategy';
 
@@ -61,6 +62,11 @@ function App() {
                         positions={api.positions}
                         marketStates={api.marketStates}
                     />
+                </section>
+
+                {/* Tracked Trader - Shows another trader's active positions */}
+                <section className="tracker-section animate-slide-up" style={{ animationDelay: '0.1s' }}>
+                    <TraderTracker />
                 </section>
 
                 {/* Tab Navigation */}
