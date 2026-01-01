@@ -725,6 +725,42 @@ export class DashboardServer {
                 res.status(500).json({ error: String(error) });
             }
         });
+
+        // Get tracked trader's recent trading activity
+        this.app.get('/api/tracked-activity/:wallet', async (req, res) => {
+            try {
+                const { wallet } = req.params;
+                const limit = parseInt(req.query.limit as string) || 50;
+
+                // Fetch activity from Polymarket Data API
+                const axios = (await import('axios')).default;
+                const response = await axios.get('https://data-api.polymarket.com/activity', {
+                    params: {
+                        user: wallet,
+                        limit,
+                        type: 'TRADE'
+                    },
+                    timeout: 10000
+                });
+
+                const trades = response.data.map((t: any) => ({
+                    timestamp: t.timestamp,
+                    title: t.title || 'Unknown Market',
+                    slug: t.slug || '',
+                    icon: t.icon || '',
+                    outcome: t.outcome || 'Unknown',
+                    side: t.side,
+                    price: t.price || 0,
+                    size: t.size || 0,
+                    usdcSize: t.usdcSize || 0
+                }));
+
+                res.json({ trades });
+            } catch (error) {
+                logger.error('Failed to fetch tracked activity', { error: String(error) });
+                res.status(500).json({ error: String(error) });
+            }
+        });
     }
 
     /**

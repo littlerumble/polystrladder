@@ -13,7 +13,7 @@ import DecisionPanel from './components/DecisionPanel';
 import MarketTradesPanel from './components/MarketTradesPanel';
 import TraderTracker from './components/TraderTracker';
 
-type TabType = 'scanner' | 'positions' | 'trades' | 'm-trades' | 'strategy';
+type TabType = 'scanner' | 'positions' | 'trades' | 'm-trades' | 'strategy' | 'tracker';
 
 function App() {
     const [activeTab, setActiveTab] = useState<TabType>('scanner');
@@ -46,7 +46,7 @@ function App() {
             />
 
             <main className="main-content">
-                {/* Portfolio Overview - Now with 7 cards including Cash Reserve and Locked Profits */}
+                {/* Portfolio Overview */}
                 <section className="portfolio-section animate-slide-up">
                     <PortfolioCard
                         portfolio={api.portfolio}
@@ -56,17 +56,12 @@ function App() {
                     />
                 </section>
 
-                {/* Decision Panel - Real-time decision reasoning */}
+                {/* Decision Panel */}
                 <section className="decision-section animate-slide-up" style={{ animationDelay: '0.05s' }}>
                     <DecisionPanel
                         positions={api.positions}
                         marketStates={api.marketStates}
                     />
-                </section>
-
-                {/* Tracked Trader - Shows another trader's active positions */}
-                <section className="tracker-section animate-slide-up" style={{ animationDelay: '0.1s' }}>
-                    <TraderTracker />
                 </section>
 
                 {/* Tab Navigation */}
@@ -106,6 +101,12 @@ function App() {
                         Strategy Events
                         <span className="badge">{api.strategyEvents.length}</span>
                     </button>
+                    <button
+                        className={`tab-btn ${activeTab === 'tracker' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('tracker')}
+                    >
+                        📡 Tracked Traders
+                    </button>
                 </nav>
 
                 {/* Tab Content */}
@@ -130,6 +131,9 @@ function App() {
                     )}
                     {activeTab === 'strategy' && (
                         <StrategyEvents events={api.strategyEvents} />
+                    )}
+                    {activeTab === 'tracker' && (
+                        <TraderTracker />
                     )}
                 </section>
             </main>
