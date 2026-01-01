@@ -70,6 +70,7 @@ export interface StrategyEvent {
     priceYes: number;
     priceNo: number;
     details: string;
+    isCopyTrade?: boolean;  // True if triggered by copy trade signal
     timestamp: string;
     market?: Market;
 }

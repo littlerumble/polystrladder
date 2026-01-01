@@ -114,13 +114,14 @@ export default function StrategyEvents({ events }: StrategyEventsProps) {
                     const { reason, icon } = parseReason(event.strategy, event.details);
 
                     return (
-                        <div key={event.id} className="event-row">
+                        <div key={event.id} className={`event-row ${event.isCopyTrade ? 'copy-trade' : ''}`}>
                             <div className="col-time">
                                 {formatTime(event.timestamp)}
                             </div>
                             <div className="col-market">
+                                {event.isCopyTrade && <span className="copy-badge" title="Copy Trade">📡</span>}
                                 <span className="market-question" title={event.market?.question}>
-                                    {event.market?.question?.substring(0, 30) || event.marketId.substring(0, 12)}...
+                                    {event.market?.question?.substring(0, 28) || event.marketId.substring(0, 12)}...
                                 </span>
                             </div>
                             <div className="col-regime">

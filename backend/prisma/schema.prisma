@@ -131,6 +131,7 @@ model StrategyEvent {
   priceYes        Float
   priceNo         Float
   details         String?   @db.Text // JSON with additional context
+  isCopyTrade     Boolean  @default(false)  // True if triggered by copy trade signal
   timestamp       DateTime @default(now())
 }
 
