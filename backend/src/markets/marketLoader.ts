@@ -23,6 +23,10 @@ interface GammaMarket {
     active?: boolean;
     closed?: boolean;
     enableOrderBook?: boolean;
+    // Mutually exclusive market group fields
+    negRisk?: boolean;           // True = multi-outcome market (only one can win)
+    negRiskMarketID?: string;    // Parent group ID for mutually exclusive markets
+    groupItemTitle?: string;     // The specific option within the group
     events?: Array<{
         category?: string;
         subcategory?: string;
@@ -104,6 +108,14 @@ export class MarketLoader {
 
             // Must be active and not closed
             if (!market.active || market.closed) return false;
+
+            // EXCLUDE mutually exclusive markets (negRisk = true)
+            // These are multi-outcome markets like "Steam GOTY" where multiple options exist
+            // but only ONE can win. Betting on multiple is guaranteed loss.
+            if (market.negRisk === true) {
+                logger.debug(`Excluded negRisk market (mutually exclusive): ${market.question?.substring(0, 50)}... [group: ${market.groupItemTitle || 'unknown'}]`);
+                return false;
+            }
 
             // Must have end date
             if (!market.endDate) return false;
@@ -245,41 +257,48 @@ export class MarketLoader {
      * Calculate profit potential score for a market.
      * Higher score = better opportunity for profit.
      * 
-     * Scoring factors:
-     * 1. Price in tradeable range (60-85%): Best for ladder strategy
-     * 2. Volume 24h: Higher volume = more trading activity
-     * 3. Liquidity: Better spreads and execution
-     * 4. Time to resolution: Closer = less risk of reversal
+     * PRIORITIZES MARKETS ENDING SOON - this is the dominant factor!
+     * 
+     * Scoring factors (max 100 points):
+     * 1. Time to resolution: DOMINANT factor (max 50 points)
+     *    - 1-3 hours: 50pts (highest priority)
+     *    - 3-6 hours: 40pts (high priority) 
+     *    - 6-9 hours: 30pts (medium priority)
+     *    - 9-12 hours: 20pts (acceptable)
+     * 2. Volume 24h: Activity indicator (max 25 points)
+     * 3. Liquidity: Execution quality (max 15 points)
+     * 4. Volume/Liquidity ratio: Turnover (max 10 points)
      */
     private calculateProfitScore(market: MarketData): number {
         let score = 0;
-
-        // We don't have live prices here, so use volume and liquidity as proxies
-        // The actual price filtering happens when strategies run
-
-        // Factor 1: Volume 24h (normalized, max 40 points)
-        // Higher volume = more trading activity = more opportunities
-        const volumeScore = Math.min(market.volume24h / 100000, 1) * 40;
-        score += volumeScore;
-
-        // Factor 2: Liquidity (normalized, max 30 points)
-        // Higher liquidity = better price discovery and tighter spreads
-        const liquidityScore = Math.min(market.liquidity / 50000, 1) * 30;
-        score += liquidityScore;
-
-        // Factor 3: Time to resolution (max 20 points)
-        // Closer to resolution = less time for thesis to break
         const now = new Date();
         const hoursToEnd = (market.endDate.getTime() - now.getTime()) / (1000 * 60 * 60);
-        if (hoursToEnd <= 6) {
-            score += 20;  // Best: resolves very soon
-        } else if (hoursToEnd <= 24) {
-            score += 15;  // Good: resolves today
-        } else if (hoursToEnd <= 48) {
-            score += 10;  // OK: resolves in 2 days
+
+        // Factor 1: Time to resolution (max 50 points) - DOMINANT FACTOR
+        // Markets ending soonest get highest priority
+        if (hoursToEnd <= 3) {
+            score += 50;  // 🔥 HIGHEST: Resolves in 1-3 hours
+        } else if (hoursToEnd <= 6) {
+            score += 40;  // ⚡ HIGH: Resolves in 3-6 hours
+        } else if (hoursToEnd <= 9) {
+            score += 30;  // 📈 MEDIUM: Resolves in 6-9 hours
+        } else if (hoursToEnd <= 12) {
+            score += 20;  // ✅ ACCEPTABLE: Resolves in 9-12 hours
         } else {
-            score += 5;   // Acceptable: resolves within 72h
+            score += 5;   // Fallback (shouldn't happen with 12h filter)
         }
+
+        logger.debug(`Market ${market.question.substring(0, 30)}... ends in ${hoursToEnd.toFixed(1)}h, time score: ${score}`);
+
+        // Factor 2: Volume 24h (normalized, max 25 points)
+        // Higher volume = more trading activity = more opportunities
+        const volumeScore = Math.min(market.volume24h / 100000, 1) * 25;
+        score += volumeScore;
+
+        // Factor 3: Liquidity (normalized, max 15 points)
+        // Higher liquidity = better price discovery and tighter spreads
+        const liquidityScore = Math.min(market.liquidity / 50000, 1) * 15;
+        score += liquidityScore;
 
         // Factor 4: Volume/Liquidity ratio (max 10 points)
         // High ratio = active market with good turnover

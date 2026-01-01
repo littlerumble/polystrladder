@@ -473,7 +473,7 @@
     ],
     "minVolume24h": 1000,
     "minLiquidity": 500,
-    "maxTimeToResolutionHours": 72,
+    "maxTimeToResolutionHours": 12,
     "ladderLevels": [
         0.65,
         0.70,
