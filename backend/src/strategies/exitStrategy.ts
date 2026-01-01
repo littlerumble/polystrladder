@@ -20,7 +20,7 @@ import { strategyLogger as logger } from '../core/logger.js';
  */
 
 // Exit thresholds
-const TRAILING_ACTIVATION_PRICE = 0.90;  // Activate trailing stop above this
+const TRAILING_ACTIVATION_PRICE = 0.85;  // Activate trailing stop above this
 const TRAILING_DISTANCE = 0.01;          // 1% trailing stop distance
 const SAFETY_CAP_PRICE = 0.98;           // Always exit at this price (safety)
 const MIN_HOLD_SECONDS = 60;             // 1 minute minimum hold time before stop loss activates
