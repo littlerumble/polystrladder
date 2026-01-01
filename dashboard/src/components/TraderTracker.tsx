@@ -26,6 +26,7 @@ interface MarketAnalysis {
     slug: string;
     title: string;
     icon: string;
+    outcome: string;  // The side they're trading (Yes/No, Leeds/Liverpool, etc.)
     traderName: string;
     trades: TradeActivity[];
     strategy: string;
@@ -158,12 +159,13 @@ function analyzeStrategy(trades: TradeActivity[]): { strategy: string; details: 
     };
 }
 
-// Group trades by market and analyze
+// Group trades by market AND outcome (so both sides show separately)
 function groupTradesByMarket(trades: TradeActivity[]): MarketAnalysis[] {
     const grouped = new Map<string, TradeActivity[]>();
 
     trades.forEach(trade => {
-        const key = `${trade.traderName}:${trade.slug}`;
+        // Group by trader + market + outcome (so Leeds and Liverpool show as separate rows)
+        const key = `${trade.traderName}:${trade.slug}:${trade.outcome}`;
         if (!grouped.has(key)) {
             grouped.set(key, []);
         }
@@ -204,6 +206,7 @@ function groupTradesByMarket(trades: TradeActivity[]): MarketAnalysis[] {
             slug: marketTrades[0].slug,
             title: marketTrades[0].title,
             icon: marketTrades[0].icon,
+            outcome: marketTrades[0].outcome,  // Which side they bought
             traderName: marketTrades[0].traderName,
             trades: sortedTrades,
             strategy,
@@ -386,7 +389,10 @@ export default function TraderTracker() {
                                     <div className="col-market">
                                         {analysis.icon && <img src={analysis.icon} alt="" className="market-icon" />}
                                         <span className="market-title" title={analysis.title}>
-                                            {analysis.title.length > 40 ? analysis.title.substring(0, 40) + '...' : analysis.title}
+                                            {analysis.title.length > 35 ? analysis.title.substring(0, 35) + '...' : analysis.title}
+                                        </span>
+                                        <span className={`outcome-tag ${analysis.outcome.toLowerCase()}`}>
+                                            {analysis.outcome}
                                         </span>
                                     </div>
                                     <div className="col-strategy">
