@@ -28,7 +28,7 @@ async function fetchActivity(address: string) {
         });
         return response.data;
     } catch (error) {
-        console.error(`Error fetching ${address}:`, error.message);
+        console.error(`Error fetching ${address}:`, (error as any).message);
         return [];
     }
 }
