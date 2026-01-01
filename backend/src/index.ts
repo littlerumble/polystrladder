@@ -744,13 +744,41 @@ class TradingBot {
      * Load persisted market states from database.
      * 
      * CRITICAL: Fetches live prices from Gamma API to avoid defaulting to 0.5
+     * Also cleans up orphaned MarketState records if their Market was deleted.
      */
     private async loadMarketStates(): Promise<void> {
+        // Find orphaned MarketState records (where Market no longer exists)
+        // and delete them to prevent crashes
+        const allStates = await this.prisma.marketState.findMany();
+        const orphanedIds: number[] = [];
+
+        for (const dbState of allStates) {
+            const marketExists = await this.prisma.market.findUnique({
+                where: { id: dbState.marketId }
+            });
+
+            if (!marketExists) {
+                orphanedIds.push(dbState.id);
+                logger.warn(`Deleting orphaned MarketState for non-existent market: ${dbState.marketId}`);
+            }
+        }
+
+        if (orphanedIds.length > 0) {
+            await this.prisma.marketState.deleteMany({
+                where: { id: { in: orphanedIds } }
+            });
+            logger.info(`Cleaned up ${orphanedIds.length} orphaned MarketState records`);
+        }
+
+        // Now load remaining valid states
         const states = await this.prisma.marketState.findMany({
             include: { market: true }
         });
 
         for (const dbState of states) {
+            // Skip if market still doesn't exist (shouldn't happen after cleanup)
+            if (!dbState.market) continue;
+
             // Try to get live price from Gamma API
             let priceYes = 0.5;
             let priceNo = 0.5;
