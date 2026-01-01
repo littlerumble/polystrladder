@@ -730,29 +730,31 @@ export class DashboardServer {
         this.app.get('/api/tracked-activity/:wallet', async (req, res) => {
             try {
                 const { wallet } = req.params;
-                const limit = parseInt(req.query.limit as string) || 50;
+                const limit = parseInt(req.query.limit as string) || 100;
 
                 // Fetch activity from Polymarket Data API
                 const response = await axios.get('https://data-api.polymarket.com/activity', {
                     params: {
                         user: wallet,
-                        limit,
-                        type: 'TRADE'
+                        limit
                     },
                     timeout: 10000
                 });
 
-                const trades = response.data.map((t: any) => ({
-                    timestamp: t.timestamp,
-                    title: t.title || 'Unknown Market',
-                    slug: t.slug || '',
-                    icon: t.icon || '',
-                    outcome: t.outcome || 'Unknown',
-                    side: t.side,
-                    price: t.price || 0,
-                    size: t.size || 0,
-                    usdcSize: t.usdcSize || 0
-                }));
+                // Filter to only trades and map to our format
+                const trades = response.data
+                    .filter((t: any) => t.type === 'TRADE')
+                    .map((t: any) => ({
+                        timestamp: t.timestamp,
+                        title: t.title || 'Unknown Market',
+                        slug: t.slug || '',
+                        icon: t.icon || '',
+                        outcome: t.outcome || 'Unknown',
+                        side: t.side,
+                        price: t.price || 0,
+                        size: t.size || 0,
+                        usdcSize: t.usdcSize || 0
+                    }));
 
                 res.json({ trades });
             } catch (error) {
