@@ -12,19 +12,49 @@ import { strategyLogger as logger } from '../core/logger.js';
  * SAFETY CAP:
  * - Always exit at 98% (near resolution, prevent gap risk)
  * 
- * STOP LOSS:
- * - Exit if price < 65%
+ * STOP LOSS (TIERED by entry price):
+ * - Entry 0.60–0.70 → stop at 0.62 (tight, low entries)
+ * - Entry 0.70–0.80 → stop at 0.68 (moderate protection)
+ * - Entry 0.80–0.90 → stop at max(0.72, entry - 10%)
+ * - Default fallback → 0.62
  */
 
 // Exit thresholds
 const TRAILING_ACTIVATION_PRICE = 0.90;  // Activate trailing stop above this
 const TRAILING_DISTANCE = 0.01;          // 1% trailing stop distance
 const SAFETY_CAP_PRICE = 0.98;           // Always exit at this price (safety)
-const STOP_LOSS_PRICE = 0.65;            // Default stop loss threshold
-const STOP_LOSS_PRICE_LOW_ENTRY = 0.62;  // Lower stop loss for entries at 0.65-0.70
-const LOW_ENTRY_MIN = 0.65;              // Entries from 65¢...
-const LOW_ENTRY_MAX = 0.70;              // ...to 70¢ get the lower stop loss
 const MIN_HOLD_SECONDS = 60;             // 1 minute minimum hold time before stop loss activates
+
+/**
+ * Calculate dynamic stop loss threshold based on entry price tier.
+ * 
+ * Entry 0.60–0.70 → stop at 0.62
+ * Entry 0.70–0.80 → stop at 0.68
+ * Entry 0.80–0.90 → stop at max(0.72, entry - 10%)
+ * Default → 0.62 (conservative)
+ */
+function calculateStopLossThreshold(entryPrice: number | undefined): number {
+    if (entryPrice === undefined || entryPrice <= 0) {
+        return 0.62;  // Conservative default
+    }
+
+    if (entryPrice >= 0.60 && entryPrice < 0.70) {
+        // Low entry tier: stop at 0.62
+        return 0.62;
+    } else if (entryPrice >= 0.70 && entryPrice < 0.80) {
+        // Mid entry tier: stop at 0.68
+        return 0.68;
+    } else if (entryPrice >= 0.80 && entryPrice <= 0.90) {
+        // High entry tier: stop at max(0.72, entry - 10%)
+        return Math.max(0.72, entryPrice - 0.10);
+    } else if (entryPrice > 0.90) {
+        // Very high entry: 10% trailing from entry
+        return entryPrice - 0.10;
+    } else {
+        // Entry below 0.60: use 0.55 (very loose)
+        return 0.55;
+    }
+}
 
 export interface ExitCheckResult {
     shouldExit: boolean;
@@ -40,7 +70,7 @@ export interface ExitCheckResult {
  * 
  * Logic:
  * 1. Price >= 98% → SELL (safety cap)
- * 2. Price < 65% → SELL (stop loss)
+ * 2. Price < stop loss threshold → SELL (tiered stop loss)
  * 3. Price >= 90% → Activate trailing stop, track high water mark
  * 4. Price drops 1% from high → SELL (trailing stop triggered)
  */
@@ -74,15 +104,11 @@ export function shouldExit(
     }
 
     // 2. STOP LOSS - Exit if price drops below threshold
-    // Dynamic stop loss: lower threshold (0.62) for entries at 0.65-0.70
-    // Minimum hold time: 1 minute before stop loss can trigger
+    // Dynamic tiered stop loss based on entry price
 
-    // Determine entry price and stop loss threshold
+    // Determine entry price and calculate tiered stop loss threshold
     const entryPrice = side === 'YES' ? position.avgEntryYes : position.avgEntryNo;
-    const isLowEntry = entryPrice !== undefined &&
-        entryPrice >= LOW_ENTRY_MIN &&
-        entryPrice <= LOW_ENTRY_MAX;
-    const stopLossThreshold = isLowEntry ? STOP_LOSS_PRICE_LOW_ENTRY : STOP_LOSS_PRICE;
+    const stopLossThreshold = calculateStopLossThreshold(entryPrice);
 
     // Check if we've held long enough for stop loss to activate
     let holdTimeSeconds = 0;
@@ -96,7 +122,7 @@ export function shouldExit(
         if (holdTimeExceeded) {
             return {
                 shouldExit: true,
-                reason: `🛑 STOP LOSS: ${side} price ${(currentPrice * 100).toFixed(1)}% < ${(stopLossThreshold * 100).toFixed(0)}% (entry: ${entryPrice ? (entryPrice * 100).toFixed(1) : '?'}%, held: ${holdTimeSeconds.toFixed(0)}s)`,
+                reason: `🛑 STOP LOSS: ${side} price ${(currentPrice * 100).toFixed(1)}% < ${(stopLossThreshold * 100).toFixed(1)}% (entry: ${entryPrice ? (entryPrice * 100).toFixed(1) : '?'}%, held: ${holdTimeSeconds.toFixed(0)}s)`,
                 isProfit: false
             };
         } else {
