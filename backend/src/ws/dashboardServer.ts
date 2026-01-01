@@ -454,6 +454,7 @@ export class DashboardServer {
                         currentPrice,
                         unrealizedPnl,
                         unrealizedPct,
+                        isCopyTrade: (trade as any).isCopyTrade || false,
                         marketQuestion: trade.market?.question
                     };
                 }));
@@ -478,6 +479,7 @@ export class DashboardServer {
                 const enriched = closedTrades.map(trade => ({
                     ...trade,
                     marketQuestion: trade.market?.question,
+                    isCopyTrade: (trade as any).isCopyTrade || false,
                     isWin: trade.profitLoss > 0,
                     holdTime: trade.exitTime && trade.entryTime
                         ? Math.round((trade.exitTime.getTime() - trade.entryTime.getTime()) / (1000 * 60))
