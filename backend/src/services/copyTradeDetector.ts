@@ -17,8 +17,10 @@ const DATA_API_BASE = 'https://data-api.polymarket.com';
 const TRACKED_WALLETS = [
     { wallet: '0x2005d16a84ceefa912d4e380cd32e7ff827875ea', name: 'RN1' },
     { wallet: '0xc65ca4755436f82d8eb461e65781584b8cadea39', name: 'LOOKINGBACK' },
-    { wallet: '0x5350afcd8bd8ceffdf4da32420d6d31be0822fda', name: 'TRADER3' },
-    { wallet: '0x5388bc8cb72eb19a3bec0e8f3db6a77f7cd54d5a', name: 'TRADER4' }
+    { wallet: '0x5350afcd8bd8ceffdf4da32420d6d31be0822fda', name: 'simonbanza' },
+    { wallet: '0x5388bc8cb72eb19a3bec0e8f3db6a77f7cd54d5a', name: 'TeemuTeemuTeemu' },
+    { wallet: '0x6a72f61820b26b1fe4d956e17b6dc2a1ea3033ee', name: 'kch123' },
+    { wallet: '0x0d3b10b8eac8b089c6e4a695e65d8e044167c46b', name: 'bossoskil' }
 ];
 
 export interface CopySignal {
@@ -61,7 +63,7 @@ export class CopyTradeDetector {
             return;
         }
 
-        logger.info('Copy Trade Detector started');
+        logger.info(`Copy Trade Detector started. Tracking ${TRACKED_WALLETS.length} traders: ${TRACKED_WALLETS.map(t => t.name).join(', ')}`);
 
         // Initial poll
         this.poll();

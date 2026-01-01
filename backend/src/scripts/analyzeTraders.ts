@@ -4,17 +4,15 @@ import axios from 'axios';
 const DATA_API_BASE = 'https://data-api.polymarket.com';
 
 const TRADERS = [
-    { name: "Theo4", address: "0x56687bf447db6ffa42ffe2204a05edaa20f55839" },
-    { name: "Fredi9999", address: "0x1f2dd6d473f3e824cd2f8a89d9c69fb96f6ad0cf" },
-    { name: "Len9311238", address: "0x78b9ac44a6d7d7a076c14e0ad518b301b63c6b76" },
-    { name: "zxgngl", address: "0xd235973291b2b75ff4070e9c0b01728c520b0f29" },
-    { name: "RepTrump", address: "0x863134d00841b2e200492805a01e1e2f5defaa53" },
-    { name: "PrincessCaro", address: "0x8119010a6e589062aa03583bb3f39ca632d9f887" },
-    { name: "walletmobile", address: "0xe9ad918c7678cd38b12603a762e638a5d1ee7091" },
-    { name: "BetTom42", address: "0x885783760858e1bd5dd09a3c3f916cfa251ac270" },
-    { name: "mikatrade77", address: "0x23786fdad0073692157c6d7dc81f281843a35fcb" },
-    { name: "alexmulti", address: "0xd0c042c08f755ff940249f62745e82d356345565" },
-    { name: "RN1", address: "0x2005d16a84ceefa912d4e380cd32e7ff827875ea" } // Known active
+    // 30-Day Leaders
+    { name: "bossoskil", address: "0x0d3b10b8eac8b089c6e4a695e65d8e044167c46b" },
+    { name: "beachboy4", address: "0xc2e7800b5af46e6093872b177b7a5e7f0563be51" },
+    { name: "kch123", address: "0x6a72f61820b26b1fe4d956e17b6dc2a1ea3033ee" },
+    { name: "eschaworld", address: "0x7b6c6d1279098054b0c630a4b871002a7cd46305" }, // eschaworldchampion2026
+    { name: "SeriouslySirius", address: "0x16b29c50f2439faf627209b2ac0c7bbddaa8a881" },
+    { name: "RN1", address: "0x2005d16a84ceefa912d4e380cd32e7ff827875ea" }, // Known active
+    // All-time for check
+    { name: "Theo4", address: "0x56687bf447db6ffa42ffe2204a05edaa20f55839" }
 ];
 
 async function fetchActivity(address: string) {
