@@ -1316,11 +1316,14 @@ class TradingBot {
             if (!position.market) continue;
 
             try {
-                const response = await axios.get(
-                    `https://gamma-api.polymarket.com/markets/${position.marketId}`,
-                    { timeout: 5000 }
-                );
-                const marketData = response.data;
+                // Use condition_id query parameter instead of path parameter for 0x IDs
+                const url = position.marketId.startsWith('0x')
+                    ? `https://gamma-api.polymarket.com/markets?condition_id=${position.marketId}`
+                    : `https://gamma-api.polymarket.com/markets/${position.marketId}`;
+
+                const response = await axios.get(url, { timeout: 5000 });
+                // API returns array when searching by condition_id
+                const marketData = Array.isArray(response.data) ? response.data[0] : response.data;
 
                 // Check if market is closed/resolved
                 if (marketData.closed) {
@@ -1470,13 +1473,16 @@ class TradingBot {
         await Promise.all(positions.map(async (position) => {
             // Try Gamma API first
             try {
-                const response = await axios.get(
-                    `https://gamma-api.polymarket.com/markets/${position.marketId}`,
-                    { timeout: 5000 }
-                );
-                const marketData = response.data;
+                // Use condition_id query parameter instead of path parameter for 0x IDs
+                const url = position.marketId.startsWith('0x')
+                    ? `https://gamma-api.polymarket.com/markets?condition_id=${position.marketId}`
+                    : `https://gamma-api.polymarket.com/markets/${position.marketId}`;
 
-                if (marketData.outcomePrices) {
+                const response = await axios.get(url, { timeout: 5000 });
+                // API returns array when searching by condition_id
+                const marketData = Array.isArray(response.data) ? response.data[0] : response.data;
+
+                if (marketData && marketData.outcomePrices) {
                     const prices = typeof marketData.outcomePrices === 'string'
                         ? JSON.parse(marketData.outcomePrices)
                         : marketData.outcomePrices;
