@@ -726,19 +726,22 @@ export class DashboardServer {
             }
         });
 
-        // Get tracked trader's recent trading activity
+        // Get tracked trader's recent trading activity (last 24 hours)
         this.app.get('/api/tracked-activity/:wallet', async (req, res) => {
             try {
                 const { wallet } = req.params;
-                const limit = parseInt(req.query.limit as string) || 100;
 
-                // Fetch activity from Polymarket Data API
+                // Calculate 24 hours ago timestamp
+                const twentyFourHoursAgo = Math.floor(Date.now() / 1000) - (24 * 60 * 60);
+
+                // Fetch activity from Polymarket Data API - get all from last 24h
                 const response = await axios.get('https://data-api.polymarket.com/activity', {
                     params: {
                         user: wallet,
-                        limit
+                        limit: 500,  // High limit to get all trades
+                        startTs: twentyFourHoursAgo
                     },
-                    timeout: 10000
+                    timeout: 15000
                 });
 
                 // Filter to only trades and map to our format
@@ -756,7 +759,7 @@ export class DashboardServer {
                         usdcSize: t.usdcSize || 0
                     }));
 
-                res.json({ trades });
+                res.json({ trades, count: trades.length });
             } catch (error) {
                 logger.error('Failed to fetch tracked activity', { error: String(error) });
                 res.status(500).json({ error: String(error) });
