@@ -27,6 +27,7 @@ import { generateTailInsuranceOrder, markTailActive } from './strategies/tail.js
 import { RiskManager } from './risk/riskManager.js';
 import { PaperExecutor } from './execution/paperExecutor.js';
 import { Executor } from './execution/executor.js';
+import { CopyTradeDetector } from './services/copyTradeDetector.js';
 
 /**
  * Main Bot Orchestrator - Event-driven trading loop.
@@ -38,6 +39,7 @@ class TradingBot {
     private dashboardServer: DashboardServer;
     private riskManager: RiskManager;
     private executor: Executor;
+    private copyTradeDetector: CopyTradeDetector;
 
     // State
     private marketStates: Map<string, MarketState> = new Map();
@@ -67,6 +69,9 @@ class TradingBot {
             this.executor = new PaperExecutor(this.prisma);
             logger.warn('LIVE mode not implemented, using PAPER executor');
         }
+
+        // Copy trade detector
+        this.copyTradeDetector = new CopyTradeDetector(this.prisma);
     }
 
     /**
@@ -142,6 +147,9 @@ class TradingBot {
             this.startResolutionChecks();
             this.startGammaPricePolling(); // CRITICAL: Use Gamma prices, not garbage CLOB prices
 
+            // Start copy trade detector
+            this.copyTradeDetector.start();
+
             this.isRunning = true;
             eventBus.emit('system:ready');
             logger.info('Bot is running');
@@ -207,6 +215,79 @@ class TradingBot {
         // Handle WebSocket reconnection
         eventBus.on('ws:connected', () => {
             logger.info('WebSocket reconnected, resubscribing...');
+        });
+
+        // Handle copy trade signals
+        eventBus.on('copy:signal', async (signal) => {
+            logger.info('📋 Copy signal received', {
+                trader: signal.traderName,
+                market: signal.marketTitle.substring(0, 40),
+                outcome: signal.outcome,
+                price: `${(signal.price * 100).toFixed(1)}¢`
+            });
+
+            // Check if we already have a position in this market
+            const existingTrade = await this.prisma.marketTrade.findFirst({
+                where: {
+                    market: { id: signal.marketSlug },
+                    status: 'OPEN'
+                }
+            });
+
+            if (existingTrade) {
+                logger.debug('Skipping copy signal - already have position');
+                return;
+            }
+
+            // Find or fetch the market
+            let market = await this.prisma.market.findFirst({
+                where: { id: signal.marketSlug }
+            });
+
+            if (!market) {
+                // Market not in DB - fetch from Gamma API and add
+                try {
+                    const response = await axios.get(`https://gamma-api.polymarket.com/markets/${signal.conditionId}`);
+                    const gammaMarket = response.data;
+
+                    market = await this.prisma.market.create({
+                        data: {
+                            id: gammaMarket.conditionId,
+                            question: gammaMarket.question || signal.marketTitle,
+                            description: gammaMarket.description || '',
+                            category: gammaMarket.tags?.[0] || 'copy-trade',
+                            outcomes: JSON.stringify(['Yes', 'No']),
+                            clobTokenIds: JSON.stringify(gammaMarket.clobTokenIds || []),
+                            active: true,
+                            volume24h: gammaMarket.volume24hr || 0,
+                            liquidity: gammaMarket.liquidity || 0,
+                            endDate: gammaMarket.endDateIso ? new Date(gammaMarket.endDateIso) : new Date(Date.now() + 86400000)
+                        }
+                    });
+                    logger.info('Added copy trade market to DB', { marketId: market.id });
+                } catch (error) {
+                    logger.error('Failed to fetch market for copy trade', { error: String(error) });
+                    return;
+                }
+            }
+
+            // Initialize market state if not exists
+            if (!this.marketStates.has(market.id)) {
+                await this.initializeMarketState(market.id);
+            }
+
+            // Trigger a price update to process via normal ladder flow
+            const tokens = this.marketTokens.get(market.id);
+            const priceUpdate: PriceUpdate = {
+                marketId: market.id,
+                tokenId: tokens?.yes || '',
+                priceYes: signal.outcome.toLowerCase() === 'yes' ? signal.price : 1 - signal.price,
+                priceNo: signal.outcome.toLowerCase() === 'no' ? signal.price : 1 - signal.price,
+                timestamp: new Date()
+            };
+
+            // Process the update
+            await this.handlePriceUpdate(priceUpdate);
         });
     }
 
