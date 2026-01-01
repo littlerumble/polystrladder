@@ -4,7 +4,7 @@
     "maxMarketExposurePct": 0.04,
     "maxSingleOrderPct": 0.02,
     "topNMarkets": 250,
-    "maxActivePositions": 15,
+    "maxActivePositions": 20,
     "allowedCategories": [
         "Sports"
     ],
