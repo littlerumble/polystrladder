@@ -22,6 +22,27 @@ interface TradeActivity {
     traderWallet: string;
 }
 
+interface MarketAnalysis {
+    slug: string;
+    title: string;
+    icon: string;
+    traderName: string;
+    trades: TradeActivity[];
+    strategy: string;
+    strategyDetails: string;
+    buyCount: number;
+    sellCount: number;
+    avgBuyPrice: number;
+    avgSellPrice: number;
+    totalBought: number;
+    totalSold: number;
+    netPosition: number;
+    firstTradeTime: number;
+    lastTradeTime: number;
+    pnlPercent: number | null;
+    status: 'OPEN' | 'CLOSED' | 'PARTIAL';
+}
+
 function formatCurrency(value: number): string {
     return new Intl.NumberFormat('en-US', {
         style: 'currency',
@@ -44,12 +65,170 @@ function formatTime(timestamp: number): string {
 }
 
 function formatTimeDetailed(timestamp: number): string {
-    const date = new Date(timestamp * 1000);
-    return date.toLocaleString();
+    return new Date(timestamp * 1000).toLocaleString();
 }
 
-type SortField = 'time' | 'trader' | 'price' | 'size';
-type SortDir = 'asc' | 'desc';
+// Analyze trading pattern and infer strategy
+function analyzeStrategy(trades: TradeActivity[]): { strategy: string; details: string } {
+    const buys = trades.filter(t => t.side === 'BUY');
+    const sells = trades.filter(t => t.side === 'SELL');
+
+    if (trades.length === 0) return { strategy: 'UNKNOWN', details: 'No trades' };
+
+    // Sort by time
+    buys.sort((a, b) => a.timestamp - b.timestamp);
+    sells.sort((a, b) => a.timestamp - b.timestamp);
+
+    const buyPrices = buys.map(b => b.price);
+    const sellPrices = sells.map(s => s.price);
+
+    // Detect patterns
+    if (buys.length >= 3 && sells.length === 0) {
+        // Multiple buys, no sells - check if laddering
+        const priceSpread = Math.max(...buyPrices) - Math.min(...buyPrices);
+        if (priceSpread >= 0.03) {
+            return {
+                strategy: 'LADDER',
+                details: `${buys.length} entries at ${(Math.min(...buyPrices) * 100).toFixed(0)}¢ to ${(Math.max(...buyPrices) * 100).toFixed(0)}¢`
+            };
+        }
+        return {
+            strategy: 'DCA',
+            details: `${buys.length} buys, averaging in at ~${(buyPrices.reduce((a, b) => a + b, 0) / buyPrices.length * 100).toFixed(1)}¢`
+        };
+    }
+
+    if (buys.length >= 2 && sells.length >= 1) {
+        // Check for scaling out
+        const avgBuy = buyPrices.reduce((a, b) => a + b, 0) / buyPrices.length;
+        const avgSell = sellPrices.reduce((a, b) => a + b, 0) / sellPrices.length;
+
+        if (avgSell > avgBuy) {
+            if (sells.length >= 2) {
+                return {
+                    strategy: 'SCALE OUT',
+                    details: `Bought avg ${(avgBuy * 100).toFixed(1)}¢, selling at ${(avgSell * 100).toFixed(1)}¢`
+                };
+            }
+            return {
+                strategy: 'TAKE PROFIT',
+                details: `Entry avg ${(avgBuy * 100).toFixed(1)}¢, exited at ${(avgSell * 100).toFixed(1)}¢`
+            };
+        } else {
+            return {
+                strategy: 'STOP LOSS',
+                details: `Entry avg ${(avgBuy * 100).toFixed(1)}¢, stopped out at ${(avgSell * 100).toFixed(1)}¢`
+            };
+        }
+    }
+
+    if (buys.length === 1 && sells.length === 0) {
+        return {
+            strategy: 'SINGLE ENTRY',
+            details: `Bought at ${(buys[0].price * 100).toFixed(1)}¢`
+        };
+    }
+
+    if (buys.length === 1 && sells.length === 1) {
+        const timeDiff = sells[0].timestamp - buys[0].timestamp;
+        const profitPct = ((sells[0].price - buys[0].price) / buys[0].price * 100);
+
+        if (timeDiff < 3600) { // Less than 1 hour
+            return {
+                strategy: 'SCALP',
+                details: `Quick trade: ${(buys[0].price * 100).toFixed(1)}¢ → ${(sells[0].price * 100).toFixed(1)}¢ (${profitPct > 0 ? '+' : ''}${profitPct.toFixed(1)}%)`
+            };
+        }
+        return {
+            strategy: 'SWING',
+            details: `Entry ${(buys[0].price * 100).toFixed(1)}¢ → Exit ${(sells[0].price * 100).toFixed(1)}¢`
+        };
+    }
+
+    if (sells.length > 0 && buys.length === 0) {
+        return {
+            strategy: 'SHORT/SELL',
+            details: `Selling ${sells.length} times`
+        };
+    }
+
+    return {
+        strategy: 'MIXED',
+        details: `${buys.length} buys, ${sells.length} sells`
+    };
+}
+
+// Group trades by market and analyze
+function groupTradesByMarket(trades: TradeActivity[]): MarketAnalysis[] {
+    const grouped = new Map<string, TradeActivity[]>();
+
+    trades.forEach(trade => {
+        const key = `${trade.traderName}:${trade.slug}`;
+        if (!grouped.has(key)) {
+            grouped.set(key, []);
+        }
+        grouped.get(key)!.push(trade);
+    });
+
+    const analyses: MarketAnalysis[] = [];
+
+    grouped.forEach((marketTrades) => {
+        // Sort trades by timestamp (newest first for display, oldest first for analysis)
+        const sortedTrades = [...marketTrades].sort((a, b) => b.timestamp - a.timestamp);
+        const chronological = [...marketTrades].sort((a, b) => a.timestamp - b.timestamp);
+
+        const buys = chronological.filter(t => t.side === 'BUY');
+        const sells = chronological.filter(t => t.side === 'SELL');
+
+        const totalBought = buys.reduce((sum, t) => sum + t.size, 0);
+        const totalSold = sells.reduce((sum, t) => sum + t.size, 0);
+        const avgBuyPrice = buys.length > 0
+            ? buys.reduce((sum, t) => sum + t.price * t.size, 0) / totalBought
+            : 0;
+        const avgSellPrice = sells.length > 0
+            ? sells.reduce((sum, t) => sum + t.price * t.size, 0) / totalSold
+            : 0;
+
+        const netPosition = totalBought - totalSold;
+        const status = netPosition > 0.5 ? 'OPEN' : (totalSold > 0 ? 'CLOSED' : 'PARTIAL');
+
+        const { strategy, details } = analyzeStrategy(chronological);
+
+        // Calculate P&L if closed
+        let pnlPercent: number | null = null;
+        if (status === 'CLOSED' && avgBuyPrice > 0) {
+            pnlPercent = ((avgSellPrice - avgBuyPrice) / avgBuyPrice) * 100;
+        }
+
+        analyses.push({
+            slug: marketTrades[0].slug,
+            title: marketTrades[0].title,
+            icon: marketTrades[0].icon,
+            traderName: marketTrades[0].traderName,
+            trades: sortedTrades,
+            strategy,
+            strategyDetails: details,
+            buyCount: buys.length,
+            sellCount: sells.length,
+            avgBuyPrice,
+            avgSellPrice,
+            totalBought,
+            totalSold,
+            netPosition,
+            firstTradeTime: chronological[0]?.timestamp || 0,
+            lastTradeTime: sortedTrades[0]?.timestamp || 0,
+            pnlPercent,
+            status
+        });
+    });
+
+    // Sort by last trade time
+    analyses.sort((a, b) => b.lastTradeTime - a.lastTradeTime);
+
+    return analyses;
+}
+
+type ViewMode = 'activity' | 'analysis';
 
 export default function TraderTracker() {
     const [activities, setActivities] = useState<TradeActivity[]>([]);
@@ -57,17 +236,20 @@ export default function TraderTracker() {
     const [error, setError] = useState<string | null>(null);
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
-    // Filters and sorting
+    // View mode
+    const [viewMode, setViewMode] = useState<ViewMode>('analysis');
+
+    // Filters
     const [filterTrader, setFilterTrader] = useState<string>('all');
-    const [sortField, setSortField] = useState<SortField>('time');
-    const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+    // Modal
+    const [selectedMarket, setSelectedMarket] = useState<MarketAnalysis | null>(null);
 
     const fetchData = async () => {
         try {
-            // Fetch activity for all traders in parallel
             const results = await Promise.all(
                 TRACKED_TRADERS.map(async (trader) => {
-                    const res = await fetch(`${API_BASE}/api/tracked-activity/${trader.wallet}?limit=50`);
+                    const res = await fetch(`${API_BASE}/api/tracked-activity/${trader.wallet}?limit=100`);
                     if (!res.ok) return [];
                     const data = await res.json();
                     return (data.trades || []).map((t: any) => ({
@@ -78,7 +260,6 @@ export default function TraderTracker() {
                 })
             );
 
-            // Combine all activities
             const combined = results.flat();
             setActivities(combined);
             setLastUpdate(new Date());
@@ -97,52 +278,29 @@ export default function TraderTracker() {
         return () => clearInterval(interval);
     }, []);
 
-    // Filter and sort
+    // Group and analyze trades
+    const marketAnalyses = useMemo(() => {
+        let filtered = activities;
+        if (filterTrader !== 'all') {
+            filtered = activities.filter(a => a.traderName === filterTrader);
+        }
+        return groupTradesByMarket(filtered);
+    }, [activities, filterTrader]);
+
+    // Filter activities for activity view
     const filteredActivities = useMemo(() => {
         let result = [...activities];
-
-        // Filter by trader
         if (filterTrader !== 'all') {
             result = result.filter(a => a.traderName === filterTrader);
         }
-
-        // Sort
-        result.sort((a, b) => {
-            let cmp = 0;
-            switch (sortField) {
-                case 'time':
-                    cmp = a.timestamp - b.timestamp;
-                    break;
-                case 'trader':
-                    cmp = a.traderName.localeCompare(b.traderName);
-                    break;
-                case 'price':
-                    cmp = a.price - b.price;
-                    break;
-                case 'size':
-                    cmp = a.usdcSize - b.usdcSize;
-                    break;
-            }
-            return sortDir === 'desc' ? -cmp : cmp;
-        });
-
-        return result;
-    }, [activities, filterTrader, sortField, sortDir]);
-
-    const handleSort = (field: SortField) => {
-        if (sortField === field) {
-            setSortDir(sortDir === 'desc' ? 'asc' : 'desc');
-        } else {
-            setSortField(field);
-            setSortDir('desc');
-        }
-    };
+        return result.sort((a, b) => b.timestamp - a.timestamp);
+    }, [activities, filterTrader]);
 
     if (loading) {
         return (
             <div className="trader-tracker">
                 <div className="tracker-controls">
-                    <h3>📡 Tracked Traders Activity</h3>
+                    <h3>📡 Tracked Traders</h3>
                 </div>
                 <div className="loading">Loading trader activity...</div>
             </div>
@@ -153,7 +311,7 @@ export default function TraderTracker() {
         return (
             <div className="trader-tracker">
                 <div className="tracker-controls">
-                    <h3>📡 Tracked Traders Activity</h3>
+                    <h3>📡 Tracked Traders</h3>
                 </div>
                 <div className="error">{error}</div>
             </div>
@@ -165,10 +323,21 @@ export default function TraderTracker() {
             {/* Controls */}
             <div className="tracker-controls">
                 <div className="controls-left">
-                    <h3>📡 Tracked Traders Activity</h3>
-                    {lastUpdate && (
-                        <span className="last-update">Updated {lastUpdate.toLocaleTimeString()}</span>
-                    )}
+                    <h3>📡 Tracked Traders</h3>
+                    <div className="view-toggle">
+                        <button
+                            className={viewMode === 'analysis' ? 'active' : ''}
+                            onClick={() => setViewMode('analysis')}
+                        >
+                            📊 Strategy Analysis
+                        </button>
+                        <button
+                            className={viewMode === 'activity' ? 'active' : ''}
+                            onClick={() => setViewMode('activity')}
+                        >
+                            📋 Activity Feed
+                        </button>
+                    </div>
                 </div>
                 <div className="controls-right">
                     <select
@@ -181,78 +350,187 @@ export default function TraderTracker() {
                             <option key={t.wallet} value={t.displayName}>{t.displayName}</option>
                         ))}
                     </select>
-                    <span className="activity-count">{filteredActivities.length} trades</span>
-                </div>
-            </div>
-
-            {/* Activity Feed */}
-            <div className="activity-feed">
-                <div className="feed-header">
-                    <span
-                        className={`col-time sortable ${sortField === 'time' ? 'sorted' : ''}`}
-                        onClick={() => handleSort('time')}
-                    >
-                        Time {sortField === 'time' && (sortDir === 'desc' ? '↓' : '↑')}
-                    </span>
-                    <span
-                        className={`col-trader sortable ${sortField === 'trader' ? 'sorted' : ''}`}
-                        onClick={() => handleSort('trader')}
-                    >
-                        Trader {sortField === 'trader' && (sortDir === 'desc' ? '↓' : '↑')}
-                    </span>
-                    <span className="col-action">Action</span>
-                    <span className="col-market">Market</span>
-                    <span
-                        className={`col-price sortable ${sortField === 'price' ? 'sorted' : ''}`}
-                        onClick={() => handleSort('price')}
-                    >
-                        Price {sortField === 'price' && (sortDir === 'desc' ? '↓' : '↑')}
-                    </span>
-                    <span
-                        className={`col-amount sortable ${sortField === 'size' ? 'sorted' : ''}`}
-                        onClick={() => handleSort('size')}
-                    >
-                        Amount {sortField === 'size' && (sortDir === 'desc' ? '↓' : '↑')}
-                    </span>
-                </div>
-                <div className="feed-body">
-                    {filteredActivities.length === 0 ? (
-                        <div className="empty-state">No trading activity found</div>
-                    ) : (
-                        filteredActivities.map((activity, idx) => (
-                            <div key={idx} className="feed-row">
-                                <div className="col-time" title={formatTimeDetailed(activity.timestamp)}>
-                                    {formatTime(activity.timestamp)}
-                                </div>
-                                <div className="col-trader">
-                                    <span className="trader-badge">{activity.traderName}</span>
-                                </div>
-                                <div className="col-action">
-                                    <span className={`action-badge ${activity.side.toLowerCase()}`}>
-                                        {activity.side}
-                                    </span>
-                                    <span className={`outcome-badge ${activity.outcome.toLowerCase()}`}>
-                                        {activity.outcome}
-                                    </span>
-                                </div>
-                                <div className="col-market">
-                                    {activity.icon && <img src={activity.icon} alt="" className="market-icon" />}
-                                    <span className="market-title" title={activity.title}>
-                                        {activity.title.length > 45 ? activity.title.substring(0, 45) + '...' : activity.title}
-                                    </span>
-                                </div>
-                                <div className="col-price">
-                                    {(activity.price * 100).toFixed(1)}¢
-                                </div>
-                                <div className="col-amount">
-                                    <span className="shares">{activity.size.toFixed(1)} shares</span>
-                                    <span className="usdc">{formatCurrency(activity.usdcSize)}</span>
-                                </div>
-                            </div>
-                        ))
+                    {lastUpdate && (
+                        <span className="last-update">Updated {lastUpdate.toLocaleTimeString()}</span>
                     )}
                 </div>
             </div>
+
+            {/* Analysis View */}
+            {viewMode === 'analysis' && (
+                <div className="analysis-feed">
+                    <div className="analysis-header">
+                        <span className="col-time">Last Trade</span>
+                        <span className="col-trader">Trader</span>
+                        <span className="col-market">Market</span>
+                        <span className="col-strategy">Strategy</span>
+                        <span className="col-stats">Trades</span>
+                        <span className="col-status">Status</span>
+                    </div>
+                    <div className="analysis-body">
+                        {marketAnalyses.length === 0 ? (
+                            <div className="empty-state">No trading activity found</div>
+                        ) : (
+                            marketAnalyses.map((analysis, idx) => (
+                                <div
+                                    key={idx}
+                                    className="analysis-row clickable"
+                                    onClick={() => setSelectedMarket(analysis)}
+                                >
+                                    <div className="col-time" title={formatTimeDetailed(analysis.lastTradeTime)}>
+                                        {formatTime(analysis.lastTradeTime)}
+                                    </div>
+                                    <div className="col-trader">
+                                        <span className="trader-badge">{analysis.traderName}</span>
+                                    </div>
+                                    <div className="col-market">
+                                        {analysis.icon && <img src={analysis.icon} alt="" className="market-icon" />}
+                                        <span className="market-title" title={analysis.title}>
+                                            {analysis.title.length > 40 ? analysis.title.substring(0, 40) + '...' : analysis.title}
+                                        </span>
+                                    </div>
+                                    <div className="col-strategy">
+                                        <span className={`strategy-badge ${analysis.strategy.toLowerCase().replace(' ', '-')}`}>
+                                            {analysis.strategy}
+                                        </span>
+                                        <span className="strategy-details">{analysis.strategyDetails}</span>
+                                    </div>
+                                    <div className="col-stats">
+                                        <span className="stat buy">{analysis.buyCount}B</span>
+                                        <span className="stat sell">{analysis.sellCount}S</span>
+                                    </div>
+                                    <div className="col-status">
+                                        <span className={`status-badge ${analysis.status.toLowerCase()}`}>
+                                            {analysis.status}
+                                        </span>
+                                        {analysis.pnlPercent !== null && (
+                                            <span className={`pnl ${analysis.pnlPercent >= 0 ? 'positive' : 'negative'}`}>
+                                                {analysis.pnlPercent >= 0 ? '+' : ''}{analysis.pnlPercent.toFixed(1)}%
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Activity View */}
+            {viewMode === 'activity' && (
+                <div className="activity-feed">
+                    <div className="feed-header">
+                        <span className="col-time">Time</span>
+                        <span className="col-trader">Trader</span>
+                        <span className="col-action">Action</span>
+                        <span className="col-market">Market</span>
+                        <span className="col-price">Price</span>
+                        <span className="col-amount">Amount</span>
+                    </div>
+                    <div className="feed-body">
+                        {filteredActivities.length === 0 ? (
+                            <div className="empty-state">No trading activity found</div>
+                        ) : (
+                            filteredActivities.map((activity, idx) => (
+                                <div key={idx} className="feed-row">
+                                    <div className="col-time" title={formatTimeDetailed(activity.timestamp)}>
+                                        {formatTime(activity.timestamp)}
+                                    </div>
+                                    <div className="col-trader">
+                                        <span className="trader-badge">{activity.traderName}</span>
+                                    </div>
+                                    <div className="col-action">
+                                        <span className={`action-badge ${activity.side.toLowerCase()}`}>
+                                            {activity.side}
+                                        </span>
+                                        <span className={`outcome-badge ${activity.outcome.toLowerCase()}`}>
+                                            {activity.outcome}
+                                        </span>
+                                    </div>
+                                    <div className="col-market">
+                                        {activity.icon && <img src={activity.icon} alt="" className="market-icon" />}
+                                        <span className="market-title" title={activity.title}>
+                                            {activity.title.length > 45 ? activity.title.substring(0, 45) + '...' : activity.title}
+                                        </span>
+                                    </div>
+                                    <div className="col-price">
+                                        {(activity.price * 100).toFixed(1)}¢
+                                    </div>
+                                    <div className="col-amount">
+                                        <span className="shares">{activity.size.toFixed(1)} shares</span>
+                                        <span className="usdc">{formatCurrency(activity.usdcSize)}</span>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Trade Detail Modal */}
+            {selectedMarket && (
+                <div className="modal-overlay" onClick={() => setSelectedMarket(null)}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <div className="modal-title">
+                                {selectedMarket.icon && <img src={selectedMarket.icon} alt="" className="market-icon-lg" />}
+                                <div>
+                                    <h3>{selectedMarket.title}</h3>
+                                    <span className="modal-trader">{selectedMarket.traderName}</span>
+                                </div>
+                            </div>
+                            <button className="modal-close" onClick={() => setSelectedMarket(null)}>×</button>
+                        </div>
+
+                        <div className="modal-summary">
+                            <div className="summary-item">
+                                <span className="label">Strategy</span>
+                                <span className={`strategy-badge ${selectedMarket.strategy.toLowerCase().replace(' ', '-')}`}>
+                                    {selectedMarket.strategy}
+                                </span>
+                            </div>
+                            <div className="summary-item">
+                                <span className="label">Avg Buy</span>
+                                <span className="value">{(selectedMarket.avgBuyPrice * 100).toFixed(2)}¢</span>
+                            </div>
+                            {selectedMarket.avgSellPrice > 0 && (
+                                <div className="summary-item">
+                                    <span className="label">Avg Sell</span>
+                                    <span className="value">{(selectedMarket.avgSellPrice * 100).toFixed(2)}¢</span>
+                                </div>
+                            )}
+                            <div className="summary-item">
+                                <span className="label">Net Position</span>
+                                <span className="value">{selectedMarket.netPosition.toFixed(1)} shares</span>
+                            </div>
+                            {selectedMarket.pnlPercent !== null && (
+                                <div className="summary-item">
+                                    <span className="label">P&L</span>
+                                    <span className={`value ${selectedMarket.pnlPercent >= 0 ? 'positive' : 'negative'}`}>
+                                        {selectedMarket.pnlPercent >= 0 ? '+' : ''}{selectedMarket.pnlPercent.toFixed(2)}%
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="modal-trades">
+                            <h4>Trade History ({selectedMarket.trades.length} trades)</h4>
+                            <div className="trades-list">
+                                {selectedMarket.trades.map((trade, idx) => (
+                                    <div key={idx} className="trade-item">
+                                        <span className="trade-time">{formatTimeDetailed(trade.timestamp)}</span>
+                                        <span className={`trade-action ${trade.side.toLowerCase()}`}>
+                                            {trade.side} {trade.outcome}
+                                        </span>
+                                        <span className="trade-price">{(trade.price * 100).toFixed(2)}¢</span>
+                                        <span className="trade-size">{trade.size.toFixed(2)} ({formatCurrency(trade.usdcSize)})</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
