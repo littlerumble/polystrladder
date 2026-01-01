@@ -84,112 +84,143 @@ export class DashboardServer {
      * which results in 50¢ mid-price. Gamma API has accurate outcomePrices.
      */
     private async fetchLivePrice(market: Market): Promise<{ priceYes: number, priceNo: number } | null> {
-        // PRIMARY: Try Gamma API first (has accurate outcomePrices)
+        // TIER 1: Try Gamma API with condition_id query
         try {
-            const response = await axios.get(`https://gamma-api.polymarket.com/markets/${market.id}`, {
+            const response = await axios.get(`https://gamma-api.polymarket.com/markets?condition_id=${market.id}`, {
                 timeout: 5000
             });
-            const marketData = response.data;
 
-            if (marketData.outcomePrices) {
-                const prices = JSON.parse(marketData.outcomePrices);
-                const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
+            if (response.data && response.data.length > 0) {
+                const marketData = response.data[0];
+                if (marketData.outcomePrices) {
+                    const prices = JSON.parse(marketData.outcomePrices);
+                    const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
 
-                // CRITICAL: outcomePrices order matches outcomes order
-                // outcomes could be ["Yes", "No"] or ["No", "Yes"]
-                let priceYes: number;
-                let priceNo: number;
+                    let priceYes: number;
+                    let priceNo: number;
 
-                const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
-                const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
+                    const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
+                    const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
 
-                if (yesIndex !== -1 && noIndex !== -1) {
-                    priceYes = parseFloat(prices[yesIndex]);
-                    priceNo = parseFloat(prices[noIndex]);
-                } else {
-                    // Fallback: assume first is YES (standard Polymarket)
-                    priceYes = parseFloat(prices[0]);
-                    priceNo = parseFloat(prices[1]);
+                    if (yesIndex !== -1 && noIndex !== -1) {
+                        priceYes = parseFloat(prices[yesIndex]);
+                        priceNo = parseFloat(prices[noIndex]);
+                    } else {
+                        priceYes = parseFloat(prices[0]);
+                        priceNo = parseFloat(prices[1]);
+                    }
+
+                    // Accept valid prices (0 < price < 1) - reject 0s which mean resolved/stale
+                    if (!isNaN(priceYes) && !isNaN(priceNo) && priceYes > 0 && priceYes < 1) {
+                        await this.persistPrice(market.id, priceYes, priceNo);
+                        return { priceYes, priceNo };
+                    }
+                }
+            }
+        } catch (error) {
+            // Continue to fallback
+        }
+
+        // TIER 2: Try CLOB orderbook (accept wider spreads as last resort)
+        try {
+            const tokenIds = JSON.parse(market.clobTokenIds);
+            const outcomes: string[] = JSON.parse(market.outcomes || '["Yes", "No"]');
+            if (tokenIds && tokenIds.length > 0) {
+                const yesIndex = outcomes.findIndex(o => o.toLowerCase() === 'yes');
+                const yesTokenId = yesIndex !== -1 ? tokenIds[yesIndex] : tokenIds[0];
+
+                const response = await axios.get(`https://clob.polymarket.com/book?token_id=${yesTokenId}`, {
+                    timeout: 5000
+                });
+                const book = response.data;
+
+                const bestBid = book.bids && book.bids.length > 0 ? parseFloat(book.bids[0].price) : undefined;
+                const bestAsk = book.asks && book.asks.length > 0 ? parseFloat(book.asks[0].price) : undefined;
+
+                // Accept if we have either bid or ask
+                let priceYes: number | undefined;
+                if (bestBid !== undefined && bestAsk !== undefined) {
+                    const spread = bestAsk - bestBid;
+                    // Only reject truly garbage spreads (>50%) - accept wider spreads if no better option
+                    if (spread < 0.50) {
+                        priceYes = (bestBid + bestAsk) / 2;
+                    }
+                } else if (bestBid !== undefined) {
+                    priceYes = bestBid;
+                } else if (bestAsk !== undefined) {
+                    priceYes = bestAsk;
                 }
 
-                if (!isNaN(priceYes) && !isNaN(priceNo) && priceYes > 0 && priceYes < 1) {
-                    // Persist to DB asynchronously
-                    this.prisma.priceHistory.create({
-                        data: {
-                            marketId: market.id,
-                            priceYes,
-                            priceNo,
-                            bestBidYes: priceYes,
-                            bestAskYes: priceYes,
-                            bestBidNo: priceNo,
-                            bestAskNo: priceNo,
-                            timestamp: new Date()
-                        }
-                    }).catch(e => logger.debug(`Failed to save cache price: ${e.message}`));
-
+                if (priceYes !== undefined && priceYes > 0 && priceYes < 1) {
+                    const priceNo = 1 - priceYes;
+                    await this.persistPrice(market.id, priceYes, priceNo, bestBid, bestAsk);
                     return { priceYes, priceNo };
                 }
             }
         } catch (error) {
-            logger.debug(`Gamma API failed for ${market.id}, trying CLOB fallback`);
+            // Continue to fallback
         }
 
-        // FALLBACK: Try CLOB orderbook (but filter out garbage spreads)
+        // TIER 3: Use cached DB price as last resort
         try {
-            const tokenIds = JSON.parse(market.clobTokenIds);
-            const outcomes: string[] = JSON.parse(market.outcomes || '["Yes", "No"]');
-            if (!tokenIds || tokenIds.length === 0) return null;
-
-            // Use outcomes field to find YES token
-            const yesIndex = outcomes.findIndex(o => o.toLowerCase() === 'yes');
-            const yesTokenId = yesIndex !== -1 ? tokenIds[yesIndex] : tokenIds[0];
-            const response = await axios.get(`https://clob.polymarket.com/book?token_id=${yesTokenId}`, {
-                timeout: 5000
+            const latestPrice = await this.prisma.priceHistory.findFirst({
+                where: { marketId: market.id },
+                orderBy: { timestamp: 'desc' }
             });
-            const book = response.data;
 
-            const bestBid = book.bids && book.bids.length > 0 ? parseFloat(book.bids[0].price) : undefined;
-            const bestAsk = book.asks && book.asks.length > 0 ? parseFloat(book.asks[0].price) : undefined;
-
-            // CRITICAL: Check for garbage spread (e.g., 1¢ bid / 99¢ ask = 98¢ spread)
-            // A normal liquid market has a spread < 10¢
-            if (bestBid !== undefined && bestAsk !== undefined) {
-                const spread = bestAsk - bestBid;
-                if (spread > 0.10) {
-                    logger.debug(`CLOB orderbook has garbage spread (${spread.toFixed(2)}) for ${market.id}, skipping`);
-                    return null;
-                }
+            if (latestPrice && latestPrice.priceYes > 0 && latestPrice.priceYes < 1) {
+                logger.debug(`Using cached price for ${market.id.substring(0, 10)}... (${latestPrice.priceYes.toFixed(2)})`);
+                return { priceYes: latestPrice.priceYes, priceNo: latestPrice.priceNo };
             }
-
-            let priceYes: number | undefined;
-            if (bestBid !== undefined && bestAsk !== undefined) {
-                priceYes = (bestBid + bestAsk) / 2;
-            } else if (bestBid !== undefined) {
-                priceYes = bestBid;
-            } else if (bestAsk !== undefined) {
-                priceYes = bestAsk;
-            }
-
-            if (priceYes === undefined) return null;
-
-            const priceNo = 1 - priceYes;
-
-            this.prisma.priceHistory.create({
-                data: {
-                    marketId: market.id,
-                    priceYes,
-                    priceNo,
-                    bestBidYes: bestBid || 0,
-                    bestAskYes: bestAsk || 0,
-                    bestBidNo: bestAsk ? (1 - bestAsk) : 0,
-                    bestAskNo: bestBid ? (1 - bestBid) : 0,
-                    timestamp: new Date()
-                }
-            }).catch(e => logger.debug(`Failed to save cache price: ${e.message}`));
-
-            return { priceYes, priceNo };
         } catch (error) {
-            return null;
+            // No cache available
+        }
+
+        return null;
+    }
+
+    /**
+     * Helper to persist price to DB and update MarketTrade if exists
+     */
+    private async persistPrice(
+        marketId: string,
+        priceYes: number,
+        priceNo: number,
+        bestBid?: number,
+        bestAsk?: number
+    ): Promise<void> {
+        // Save to price history
+        this.prisma.priceHistory.create({
+            data: {
+                marketId,
+                priceYes,
+                priceNo,
+                bestBidYes: bestBid || priceYes,
+                bestAskYes: bestAsk || priceYes,
+                bestBidNo: 1 - (bestAsk || priceYes),
+                bestAskNo: 1 - (bestBid || priceYes),
+                timestamp: new Date()
+            }
+        }).catch(() => { }); // Swallow errors
+
+        // Update open MarketTrade with current price and unrealized P&L
+        const openTrade = await this.prisma.marketTrade.findFirst({
+            where: { marketId, status: 'OPEN' }
+        });
+
+        if (openTrade) {
+            const currentPrice = openTrade.side === 'YES' ? priceYes : priceNo;
+            const currentValue = openTrade.currentShares * currentPrice;
+            const remainingCostBasis = openTrade.entryAmount;
+            const unrealizedPnl = currentValue - remainingCostBasis;
+
+            this.prisma.marketTrade.update({
+                where: { id: openTrade.id },
+                data: {
+                    currentPrice,
+                    unrealizedPnl
+                }
+            }).catch(() => { });
         }
     }
 
