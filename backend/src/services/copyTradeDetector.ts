@@ -145,22 +145,40 @@ export class CopyTradeDetector {
                     const inRange = priceToCheck >= minPrice && priceToCheck <= maxPrice;
                     const status = inRange ? 'IN_RANGE' : 'WATCHING';
 
-                    // Store in TrackedMarket table
-                    await this.prisma.trackedMarket.create({
-                        data: {
-                            conditionId: trade.conditionId,
-                            slug: trade.slug,           // Store slug
-                            title: trade.title,
-                            outcome: trade.outcome,
-                            traderName: trader.name,
-                            traderWallet: trader.wallet,
-                            trackedPrice: trade.price,     // Original trader entry
-                            currentPrice: priceToCheck,    // Current market price
-                            status: status,
-                            signalTime: new Date(trade.timestamp * 1000),
-                            enteredRangeAt: inRange ? new Date() : null
-                        }
+                    // Store or Update TrackedMarket table
+                    const trackedRecord = await this.prisma.trackedMarket.findUnique({
+                        where: { conditionId: trade.conditionId }
                     });
+
+                    if (trackedRecord) {
+                        // Update existing record
+                        await this.prisma.trackedMarket.update({
+                            where: { id: trackedRecord.id },
+                            data: {
+                                currentPrice: priceToCheck,
+                                // Only update status if not already EXECUTED
+                                status: trackedRecord.status === 'EXECUTED' ? 'EXECUTED' : status,
+                                enteredRangeAt: (!trackedRecord.enteredRangeAt && inRange) ? new Date() : trackedRecord.enteredRangeAt
+                            }
+                        });
+                    } else {
+                        // Create new record
+                        await this.prisma.trackedMarket.create({
+                            data: {
+                                conditionId: trade.conditionId,
+                                slug: trade.slug,           // Store slug
+                                title: trade.title,
+                                outcome: trade.outcome,
+                                traderName: trader.name,
+                                traderWallet: trader.wallet,
+                                trackedPrice: trade.price,     // Original trader entry
+                                currentPrice: priceToCheck,    // Current market price
+                                status: status,
+                                signalTime: new Date(trade.timestamp * 1000),
+                                enteredRangeAt: inRange ? new Date() : null
+                            }
+                        });
+                    }
 
                     logger.info(`👁️ Tracked market added: ${status}`, {
                         trader: trader.name,
