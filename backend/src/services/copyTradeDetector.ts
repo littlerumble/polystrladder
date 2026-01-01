@@ -32,6 +32,7 @@ export interface CopySignal {
     outcome: string;
     price: number;
     timestamp: number;
+    strategyType: 'STANDARD' | 'LOTTERY';  // Which copy trade strategy to use
 }
 
 interface TradeActivity {
@@ -87,9 +88,15 @@ export class CopyTradeDetector {
      * Poll all tracked traders for new trades.
      */
     private async poll(): Promise<void> {
+        // Standard copy trade range (65-90¢)
         const ladderLevels = configService.get('ladderLevels') as number[] || [0.65, 0.70, 0.75, 0.80];
-        const minPrice = Math.min(...ladderLevels);
-        const maxPrice = 0.90;
+        const standardMinPrice = Math.min(...ladderLevels);
+        const standardMaxPrice = 0.90;
+
+        // Lottery copy trade range (0-5¢)
+        const lotteryConfig = configService.get('copyTradeLottery') as any;
+        const lotteryEnabled = lotteryConfig?.enabled ?? false;
+        const lotteryMaxPrice = lotteryConfig?.maxPrice ?? 0.05;
 
         for (const trader of TRACKED_WALLETS) {
             try {
@@ -138,54 +145,43 @@ export class CopyTradeDetector {
                         continue;
                     }
 
-                    // Judge based on CURRENT price
+                    // Determine which strategy applies based on CURRENT price
                     const priceToCheck = currentPrice;
 
-                    // Judge based on CURRENT price
-                    const inRange = priceToCheck >= minPrice && priceToCheck <= maxPrice;
+                    // Check standard range (65-90¢)
+                    const inStandardRange = priceToCheck >= standardMinPrice && priceToCheck <= standardMaxPrice;
+
+                    // Check lottery range (0-5¢)
+                    const inLotteryRange = lotteryEnabled && priceToCheck > 0 && priceToCheck <= lotteryMaxPrice;
+
+                    const inRange = inStandardRange || inLotteryRange;
+                    const strategyType: 'STANDARD' | 'LOTTERY' = inLotteryRange ? 'LOTTERY' : 'STANDARD';
                     const status = inRange ? 'IN_RANGE' : 'WATCHING';
 
-                    // Store or Update TrackedMarket table
-                    const trackedRecord = await this.prisma.trackedMarket.findUnique({
-                        where: { conditionId: trade.conditionId }
+                    // Store in TrackedMarket table
+                    await this.prisma.trackedMarket.create({
+                        data: {
+                            conditionId: trade.conditionId,
+                            slug: trade.slug,           // Store slug
+                            title: trade.title,
+                            outcome: trade.outcome,
+                            traderName: trader.name,
+                            traderWallet: trader.wallet,
+                            trackedPrice: trade.price,     // Original trader entry
+                            currentPrice: priceToCheck,    // Current market price
+                            status: status,
+                            signalTime: new Date(trade.timestamp * 1000),
+                            enteredRangeAt: inRange ? new Date() : null
+                        }
                     });
 
-                    if (trackedRecord) {
-                        // Update existing record
-                        await this.prisma.trackedMarket.update({
-                            where: { id: trackedRecord.id },
-                            data: {
-                                currentPrice: priceToCheck,
-                                // Only update status if not already EXECUTED
-                                status: trackedRecord.status === 'EXECUTED' ? 'EXECUTED' : status,
-                                enteredRangeAt: (!trackedRecord.enteredRangeAt && inRange) ? new Date() : trackedRecord.enteredRangeAt
-                            }
-                        });
-                    } else {
-                        // Create new record
-                        await this.prisma.trackedMarket.create({
-                            data: {
-                                conditionId: trade.conditionId,
-                                slug: trade.slug,           // Store slug
-                                title: trade.title,
-                                outcome: trade.outcome,
-                                traderName: trader.name,
-                                traderWallet: trader.wallet,
-                                trackedPrice: trade.price,     // Original trader entry
-                                currentPrice: priceToCheck,    // Current market price
-                                status: status,
-                                signalTime: new Date(trade.timestamp * 1000),
-                                enteredRangeAt: inRange ? new Date() : null
-                            }
-                        });
-                    }
-
-                    logger.info(`👁️ Tracked market added: ${status}`, {
+                    logger.info(`👁️ Tracked market added: ${status} (${strategyType})`, {
                         trader: trader.name,
                         market: trade.title.substring(0, 40),
                         outcome: trade.outcome,
                         traderPrice: `${(trade.price * 100).toFixed(1)}¢`,
                         currentPrice: `${(priceToCheck * 100).toFixed(1)}¢`,
+                        strategy: strategyType,
                         inRange
                     });
 
@@ -199,13 +195,15 @@ export class CopyTradeDetector {
                             marketTitle: trade.title,
                             outcome: trade.outcome,
                             price: priceToCheck, // Use CURRENT price for execution
-                            timestamp: trade.timestamp
+                            timestamp: trade.timestamp,
+                            strategyType: strategyType  // LOTTERY or STANDARD
                         };
 
-                        logger.info('🔔 Copy signal - IN RANGE (Current Price), executing!', {
+                        logger.info(`🔔 Copy signal - ${strategyType} IN RANGE, executing!`, {
                             trader: trader.name,
                             market: trade.title.substring(0, 40),
-                            price: `${(priceToCheck * 100).toFixed(1)}¢`
+                            price: `${(priceToCheck * 100).toFixed(1)}¢`,
+                            strategy: strategyType
                         });
 
                         eventBus.emit('copy:signal', signal);
@@ -221,13 +219,18 @@ export class CopyTradeDetector {
         }
 
         // Also check WATCHING markets for price entry into range
-        await this.checkWatchingMarkets(minPrice, maxPrice);
+        await this.checkWatchingMarkets(standardMinPrice, standardMaxPrice, lotteryEnabled, lotteryMaxPrice);
     }
 
     /**
      * Check WATCHING markets for price entry into our range.
      */
-    private async checkWatchingMarkets(minPrice: number, maxPrice: number): Promise<void> {
+    private async checkWatchingMarkets(
+        standardMinPrice: number,
+        standardMaxPrice: number,
+        lotteryEnabled: boolean,
+        lotteryMaxPrice: number
+    ): Promise<void> {
         const watchingMarkets = await this.prisma.trackedMarket.findMany({
             where: { status: 'WATCHING' }
         });
@@ -245,8 +248,14 @@ export class CopyTradeDetector {
                     data: { currentPrice }
                 });
 
-                // Check if price entered our range
-                if (currentPrice >= minPrice && currentPrice <= maxPrice) {
+                // Check if price entered standard range (65-90¢) or lottery range (0-5¢)
+                const inStandardRange = currentPrice >= standardMinPrice && currentPrice <= standardMaxPrice;
+                const inLotteryRange = lotteryEnabled && currentPrice > 0 && currentPrice <= lotteryMaxPrice;
+                const inRange = inStandardRange || inLotteryRange;
+
+                if (inRange) {
+                    const strategyType: 'STANDARD' | 'LOTTERY' = inLotteryRange ? 'LOTTERY' : 'STANDARD';
+
                     // Update status
                     await this.prisma.trackedMarket.update({
                         where: { id: tracked.id },
@@ -257,10 +266,11 @@ export class CopyTradeDetector {
                         }
                     });
 
-                    logger.info('🎯 Tracked market entered range!', {
+                    logger.info(`🎯 Tracked market entered range (${strategyType})!`, {
                         market: tracked.title.substring(0, 40),
                         previousPrice: `${(tracked.trackedPrice * 100).toFixed(1)}¢`,
-                        currentPrice: `${(currentPrice * 100).toFixed(1)}¢`
+                        currentPrice: `${(currentPrice * 100).toFixed(1)}¢`,
+                        strategy: strategyType
                     });
 
                     // Emit copy signal
@@ -272,7 +282,8 @@ export class CopyTradeDetector {
                         marketTitle: tracked.title,
                         outcome: tracked.outcome,
                         price: currentPrice,
-                        timestamp: Date.now() / 1000
+                        timestamp: Date.now() / 1000,
+                        strategyType: strategyType  // LOTTERY or STANDARD
                     };
 
                     eventBus.emit('copy:signal', signal);

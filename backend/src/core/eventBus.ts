@@ -54,7 +54,15 @@ export interface BotEvents {
     'ws:reconnecting': (attempt: number) => void;
 
     // Copy trading events
-    'copy:signal': (signal: { traderName: string; conditionId: string; marketSlug: string; marketTitle: string; outcome: string; price: number }) => void;
+    'copy:signal': (signal: {
+        traderName: string;
+        conditionId: string;
+        marketSlug: string;
+        marketTitle: string;
+        outcome: string;
+        price: number;
+        strategyType: 'STANDARD' | 'LOTTERY';
+    }) => void;
 }
 
 /**

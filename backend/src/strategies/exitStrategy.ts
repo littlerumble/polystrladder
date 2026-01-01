@@ -69,6 +69,11 @@ export interface ExitCheckResult {
  * Check if a position should be exited based on trailing stop logic.
  * 
  * Logic:
+ * LOTTERY STRATEGY (strategyDetail starts with "lottery_copy_"):
+ * - Exit at +20% profit from entry
+ * - Exit if price drops 2% from entry (tight stop)
+ * 
+ * STANDARD STRATEGY:
  * 1. Price >= 98% → SELL (safety cap)
  * 2. Price < stop loss threshold → SELL (tiered stop loss)
  * 3. Price >= 90% → Activate trailing stop, track high water mark
@@ -78,21 +83,89 @@ export function shouldExit(
     position: Position,
     currentPriceYes: number,
     currentPriceNo: number,
-    state?: MarketState  // Optional state for trailing stop tracking
+    state?: MarketState,  // Optional state for trailing stop tracking
+    strategyDetail?: string  // Strategy detail from MarketTrade (e.g., "lottery_copy_kch123")
 ): ExitCheckResult {
     // Determine which side we have a position on
     let currentPrice: number;
     let side: string;
+    let entryPrice: number | undefined;
 
     if (position.sharesYes > 0) {
         currentPrice = currentPriceYes;
         side = 'YES';
+        entryPrice = position.avgEntryYes;
     } else if (position.sharesNo > 0) {
         currentPrice = currentPriceNo;
         side = 'NO';
+        entryPrice = position.avgEntryNo;
     } else {
         return { shouldExit: false, reason: 'No position', isProfit: false };
     }
+
+    // Check if this is a lottery trade
+    const isLottery = strategyDetail?.startsWith('lottery_copy_') ?? false;
+
+    if (isLottery && entryPrice) {
+        // LOTTERY STRATEGY: Trailing stop after 20% profit
+        const profitTarget = entryPrice * 1.20;  // +20% from entry
+
+        // Check if we've reached 20% profit to activate trailing stop
+        if (currentPrice >= profitTarget) {
+            // Trailing stop is active - check if we have state to track high water mark
+            if (state) {
+                // Initialize or update high water mark
+                let highWater = state.highWaterMark || currentPrice;
+                let trailingActive = state.trailingStopActive || false;
+
+                // Activate trailing if not already active
+                if (!trailingActive) {
+                    return {
+                        shouldExit: false,
+                        reason: 'Lottery: 20% profit reached, activating trailing stop',
+                        isProfit: true,
+                        trailingStopActive: true,
+                        highWaterMark: currentPrice
+                    };
+                }
+
+                // Update high water mark if price increased
+                if (currentPrice > highWater) {
+                    highWater = currentPrice;
+                }
+
+                // Check if price dropped 2% from high
+                const trailingThreshold = highWater * 0.98;  // 2% trailing distance
+                if (currentPrice <= trailingThreshold) {
+                    return {
+                        shouldExit: true,
+                        reason: `🎯 LOTTERY TRAILING: ${side} price ${(currentPrice * 100).toFixed(1)}¢ dropped 2% from peak ${(highWater * 100).toFixed(1)}¢ (entry: ${(entryPrice * 100).toFixed(1)}¢)`,
+                        isProfit: true
+                    };
+                }
+
+                // Update high water mark
+                return {
+                    shouldExit: false,
+                    reason: 'Lottery: trailing stop active, holding',
+                    isProfit: true,
+                    highWaterMark: highWater
+                };
+            } else {
+                // No state tracking - just exit at 20% profit
+                return {
+                    shouldExit: true,
+                    reason: `🎯 LOTTERY PROFIT: ${side} price ${(currentPrice * 100).toFixed(1)}¢ >= target ${(profitTarget * 100).toFixed(1)}¢ (+20% from ${(entryPrice * 100).toFixed(1)}¢)`,
+                    isProfit: true
+                };
+            }
+        }
+
+        // Not yet at 20% profit - hold
+        return { shouldExit: false, reason: `Lottery: holding (${(entryPrice * 100).toFixed(1)}¢ → ${(currentPrice * 100).toFixed(1)}¢, target: ${(profitTarget * 100).toFixed(1)}¢)`, isProfit: false };
+    }
+
+    // STANDARD STRATEGY (continue with existing logic)
 
     // 1. SAFETY CAP - Always exit at 98%
     if (currentPrice >= SAFETY_CAP_PRICE) {
@@ -106,8 +179,7 @@ export function shouldExit(
     // 2. STOP LOSS - Exit if price drops below threshold
     // Dynamic tiered stop loss based on entry price
 
-    // Determine entry price and calculate tiered stop loss threshold
-    const entryPrice = side === 'YES' ? position.avgEntryYes : position.avgEntryNo;
+    // Calculate tiered stop loss threshold (entryPrice already declared above)
     const stopLossThreshold = calculateStopLossThreshold(entryPrice);
 
     // Check if we've held long enough for stop loss to activate

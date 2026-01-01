@@ -100,6 +100,9 @@ class TradingBot {
             // Load persisted market states
             await this.loadMarketStates();
 
+            // CRITICAL: Load markets with open trades and subscribe to them
+            await this.loadOpenTradeMarkets();
+
             // Start dashboard server
             this.dashboardServer.start();
 
@@ -119,10 +122,10 @@ class TradingBot {
             // logger.info(`Initialized ${this.marketStates.size} market states for trading`);
 
             // Start only essential periodic tasks
-            // this.marketLoader.startPeriodicRefresh();  // DISABLED
+            // this.marketLoader.startPeriodicRefresh();  // DISABLED - not needed for copy trade
             this.startPnlSnapshots();
             this.startResolutionChecks();
-            // this.startGammaPricePolling();  // DISABLED
+            this.startGammaPricePolling();  // ENABLED - CRITICAL for price updates!
 
             // Start copy trade detector - THIS IS THE ONLY ENTRY POINT NOW
             this.copyTradeDetector.start();
@@ -340,12 +343,23 @@ class TradingBot {
                     }
                 }
 
-                // Calculate position size (use bankroll-based sizing)
-                // Calculate position size (use bankroll-based sizing)
+                // Calculate position size based on strategy type
                 const bankroll = configService.get('bankroll') as number || 1000;
-                const copyPct = configService.get('copyTradePct') as number || 0.05;
-                const copyMax = configService.get('copyTradeMax') as number || 100;
-                const sizePerTrade = Math.min(bankroll * copyPct, copyMax);  // Configurable size (5% / $100 default)
+                let sizePerTrade: number;
+                let strategyLabel: string;
+
+                if (signal.strategyType === 'LOTTERY') {
+                    // Lottery: fixed $5 investment
+                    const lotteryConfig = configService.get('copyTradeLottery') as any;
+                    sizePerTrade = lotteryConfig?.investmentSize ?? 5;
+                    strategyLabel = `lottery_copy_${signal.traderName}`;
+                } else {
+                    // Standard: 5% of bankroll or max $100
+                    const copyPct = configService.get('copyTradePct') as number || 0.05;
+                    const copyMax = configService.get('copyTradeMax') as number || 100;
+                    sizePerTrade = Math.min(bankroll * copyPct, copyMax);
+                    strategyLabel = `copy_${signal.traderName}`;
+                }
 
                 // Determine the token ID for the outcome we want
                 let tokenId = '';
@@ -368,7 +382,7 @@ class TradingBot {
                     sizeUsdc: sizePerTrade,
                     shares: sizePerTrade / signal.price,
                     strategy: StrategyType.LADDER_COMPRESSION,
-                    strategyDetail: `copy_${signal.traderName}`,
+                    strategyDetail: strategyLabel,  // Contains strategy type for exit logic
                     isExit: false,
                     confidence: 0.9  // High confidence for copy trades
                 };
@@ -426,6 +440,21 @@ class TradingBot {
                     // Initialize market state for monitoring
                     if (!this.marketStates.has(market.id)) {
                         await this.initializeMarketState(market.id);
+                    }
+
+                    // CRITICAL: Subscribe to WebSocket for real-time price updates
+                    const clobTokenIds = JSON.parse(market.clobTokenIds);
+                    if (clobTokenIds.length >= 2) {
+                        const outcomes = JSON.parse(market.outcomes);
+                        this.clobFeed.subscribeToMarkets([{
+                            marketId: market.id,
+                            clobTokenIds: clobTokenIds,
+                            outcomes: outcomes
+                        }]);
+                        logger.info('Subscribed to WebSocket for copy-traded market', {
+                            marketId: market.id,
+                            tokenCount: clobTokenIds.length
+                        });
                     }
                 } else {
                     logger.error('Copy trade execution failed', {
@@ -1102,6 +1131,88 @@ class TradingBot {
         logger.info(`Loaded ${states.length} market states from database`);
     }
 
+    /**
+     * Load all markets with open trades and ensure they're being tracked.
+     * CRITICAL: Ensures existing trades get price updates on bot restart.
+     */
+    private async loadOpenTradeMarkets(): Promise<void> {
+        // Get all markets with open trades
+        const openTrades = await this.prisma.marketTrade.findMany({
+            where: { status: 'OPEN' },
+            include: { market: true }
+        });
+
+        if (openTrades.length === 0) {
+            logger.info('No open trades found on startup');
+            return;
+        }
+
+        logger.info(`Found ${openTrades.length} open trades, loading their markets...`);
+
+        for (const trade of openTrades) {
+            if (!trade.market) {
+                logger.warn(`Trade #${trade.id} has no market data`, { marketId: trade.marketId });
+                continue;
+            }
+
+            const market = trade.market;
+            const marketId = market.id;
+
+            // Skip if already loaded
+            if (this.marketStates.has(marketId)) {
+                logger.debug(`Market ${marketId} already loaded`);
+                continue;
+            }
+
+            // Initialize market state
+            await this.initializeMarketState(marketId);
+
+            // Setup token mapping
+            try {
+                const clobTokenIds = JSON.parse(market.clobTokenIds);
+                const outcomes = JSON.parse(market.outcomes);
+
+                if (clobTokenIds.length >= 2) {
+                    const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
+                    const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
+
+                    if (yesIndex !== -1 && noIndex !== -1) {
+                        this.marketTokens.set(marketId, {
+                            yes: clobTokenIds[yesIndex],
+                            no: clobTokenIds[noIndex]
+                        });
+                    } else {
+                        this.marketTokens.set(marketId, {
+                            yes: clobTokenIds[0] || '',
+                            no: clobTokenIds[1] || ''
+                        });
+                    }
+
+                    // Map tokens to market
+                    for (const tokenId of clobTokenIds) {
+                        this.tokenToMarket.set(tokenId, marketId);
+                    }
+
+                    // Subscribe to WebSocket for real-time updates
+                    this.clobFeed.subscribeToMarkets([{
+                        marketId: marketId,
+                        clobTokenIds: clobTokenIds,
+                        outcomes: outcomes
+                    }]);
+
+                    logger.info(`Loaded and subscribed to market for open trade #${trade.id}`, {
+                        marketId: marketId.substring(0, 20) + '...',
+                        side: trade.side
+                    });
+                }
+            } catch (error) {
+                logger.error(`Failed to setup market ${marketId}`, { error: String(error) });
+            }
+        }
+
+        logger.info(`Finished loading ${openTrades.length} markets with open trades`);
+    }
+
 
     /**
      * Persist market state to database.
@@ -1316,14 +1427,11 @@ class TradingBot {
             if (!position.market) continue;
 
             try {
-                // Use condition_id query parameter instead of path parameter for 0x IDs
-                const url = position.marketId.startsWith('0x')
-                    ? `https://gamma-api.polymarket.com/markets?condition_id=${position.marketId}`
-                    : `https://gamma-api.polymarket.com/markets/${position.marketId}`;
-
-                const response = await axios.get(url, { timeout: 5000 });
-                // API returns array when searching by condition_id
-                const marketData = Array.isArray(response.data) ? response.data[0] : response.data;
+                const response = await axios.get(
+                    `https://gamma-api.polymarket.com/markets/${position.marketId}`,
+                    { timeout: 5000 }
+                );
+                const marketData = response.data;
 
                 // Check if market is closed/resolved
                 if (marketData.closed) {
@@ -1473,16 +1581,13 @@ class TradingBot {
         await Promise.all(positions.map(async (position) => {
             // Try Gamma API first
             try {
-                // Use condition_id query parameter instead of path parameter for 0x IDs
-                const url = position.marketId.startsWith('0x')
-                    ? `https://gamma-api.polymarket.com/markets?condition_id=${position.marketId}`
-                    : `https://gamma-api.polymarket.com/markets/${position.marketId}`;
+                const response = await axios.get(
+                    `https://gamma-api.polymarket.com/markets/${position.marketId}`,
+                    { timeout: 5000 }
+                );
+                const marketData = response.data;
 
-                const response = await axios.get(url, { timeout: 5000 });
-                // API returns array when searching by condition_id
-                const marketData = Array.isArray(response.data) ? response.data[0] : response.data;
-
-                if (marketData && marketData.outcomePrices) {
+                if (marketData.outcomePrices) {
                     const prices = typeof marketData.outcomePrices === 'string'
                         ? JSON.parse(marketData.outcomePrices)
                         : marketData.outcomePrices;
@@ -1590,17 +1695,32 @@ class TradingBot {
             const prices = currentPrices.get(trade.marketId);
             if (prices) {
                 const currentPrice = trade.side === 'YES' ? prices.yes : prices.no;
-                const currentValue = trade.currentShares * currentPrice;
-                const remainingCostBasis = trade.entryAmount * (trade.currentShares / trade.entryShares);
-                const unrealizedPnl = currentValue - remainingCostBasis;
 
-                await this.prisma.marketTrade.update({
-                    where: { id: trade.id },
-                    data: {
-                        currentPrice,
-                        unrealizedPnl
-                    }
-                }).catch(() => { }); // Ignore errors
+                // CRITICAL: Validate price before updating
+                if (currentPrice > 0 && currentPrice < 1 && !isNaN(currentPrice)) {
+                    const currentValue = trade.currentShares * currentPrice;
+                    const remainingCostBasis = trade.entryAmount * (trade.currentShares / trade.entryShares);
+                    const unrealizedPnl = currentValue - remainingCostBasis;
+
+                    await this.prisma.marketTrade.update({
+                        where: { id: trade.id },
+                        data: {
+                            currentPrice,
+                            unrealizedPnl
+                        }
+                    }).catch(() => { }); // Ignore errors
+                } else {
+                    logger.warn('Skipping MarketTrade update - invalid price', {
+                        tradeId: trade.id,
+                        marketId: trade.marketId,
+                        invalidPrice: currentPrice
+                    });
+                }
+            } else {
+                logger.warn('No current price available for MarketTrade', {
+                    tradeId: trade.id,
+                    marketId: trade.marketId
+                });
             }
         }
 

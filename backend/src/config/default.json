@@ -480,6 +480,13 @@
     ],
     "copyTradePct": 0.05,
     "copyTradeMax": 100,
+    "copyTradeLottery": {
+        "enabled": true,
+        "maxPrice": 0.05,
+        "investmentSize": 5,
+        "profitTargetPct": 0.20,
+        "stopLossPct": 0.02
+    },
     "maxExposurePerMarket": 50,
     "maxBuyPrice": 0.84,
     "tailPriceThreshold": 0.05,
@@ -492,7 +499,7 @@
     "earlyUncertainPriceMax": 0.55,
     "volatilityAbsorptionPriceMin": 0.40,
     "volatilityAbsorptionPriceMax": 0.60,
-    "pnlSnapshotIntervalMs": 60000,
+    "pnlSnapshotIntervalMs": 2000,
     "marketRefreshIntervalMs": 60000,
     "wsReconnectDelayMs": 5000,
     "dashboardPort": 3001,

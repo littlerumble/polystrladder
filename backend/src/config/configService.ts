@@ -22,6 +22,13 @@ export interface Config {
     ladderLevels: number[];
     copyTradePct: number;
     copyTradeMax: number;
+    copyTradeLottery: {
+        enabled: boolean;
+        maxPrice: number;
+        investmentSize: number;
+        profitTargetPct: number;
+        stopLossPct: number;
+    };
     maxBuyPrice: number;
     tailPriceThreshold: number;
     tailExposurePct: number;
