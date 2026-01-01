@@ -70,6 +70,9 @@ model MarketTrade {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   
+  // Copy trading flag
+  isCopyTrade     Boolean   @default(false)  // True if opened from tracked trader signal
+  
   @@index([marketId])
   @@index([status])
 }

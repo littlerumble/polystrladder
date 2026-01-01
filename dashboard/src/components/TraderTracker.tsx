@@ -238,6 +238,7 @@ export default function TraderTracker() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+    const [ourMarkets, setOurMarkets] = useState<Set<string>>(new Set());
 
     // View mode
     const [viewMode, setViewMode] = useState<ViewMode>('analysis');
@@ -250,6 +251,7 @@ export default function TraderTracker() {
 
     const fetchData = async () => {
         try {
+            // Fetch tracked trader activity
             const results = await Promise.all(
                 TRACKED_TRADERS.map(async (trader) => {
                     const res = await fetch(`${API_BASE}/api/tracked-activity/${trader.wallet}?limit=100`);
@@ -262,6 +264,22 @@ export default function TraderTracker() {
                     }));
                 })
             );
+
+            // Fetch our active positions
+            try {
+                const posRes = await fetch(`${API_BASE}/api/market-trades`);
+                if (posRes.ok) {
+                    const posData = await posRes.json();
+                    const openMarkets = new Set<string>(
+                        posData
+                            .filter((t: any) => t.status === 'OPEN')
+                            .map((t: any) => t.marketId)
+                    );
+                    setOurMarkets(openMarkets);
+                }
+            } catch {
+                // Ignore errors fetching our positions
+            }
 
             const combined = results.flat();
             setActivities(combined);
@@ -363,6 +381,7 @@ export default function TraderTracker() {
             {viewMode === 'analysis' && (
                 <div className="analysis-feed">
                     <div className="analysis-header">
+                        <span className="col-bought"></span>
                         <span className="col-time">Last Trade</span>
                         <span className="col-trader">Trader</span>
                         <span className="col-market">Market</span>
@@ -377,9 +396,12 @@ export default function TraderTracker() {
                             marketAnalyses.map((analysis, idx) => (
                                 <div
                                     key={idx}
-                                    className="analysis-row clickable"
+                                    className={`analysis-row clickable ${ourMarkets.has(analysis.slug) ? 'we-bought' : ''}`}
                                     onClick={() => setSelectedMarket(analysis)}
                                 >
+                                    <div className="col-bought">
+                                        {ourMarkets.has(analysis.slug) && <span className="bought-icon" title="We bought this">✓</span>}
+                                    </div>
                                     <div className="col-time" title={formatTimeDetailed(analysis.lastTradeTime)}>
                                         {formatTime(analysis.lastTradeTime)}
                                     </div>
