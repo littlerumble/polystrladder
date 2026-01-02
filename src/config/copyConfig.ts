@@ -5,8 +5,12 @@
  */
 
 export const COPY_CONFIG = {
-    // Target whale to copy
-    WHALE_ADDRESS: process.env.WHALE_ADDRESS || '0x2005d16a84ceefa912d4e380cd32e7ff827875ea',
+    // Target whales to copy (Original, kch123, bossoskil)
+    WHALE_ADDRESSES: [
+        '0x2005d16a84ceefa912d4e380cd32e7ff827875ea',
+        '0x6a72f61820b26b1fe4d956e17b6dc2a1ea3033ee',
+        '0x0d3b10b8eac8b089c6e4a695e65d8e044167c46b',
+    ],
 
     // API endpoints
     API: {

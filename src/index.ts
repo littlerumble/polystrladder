@@ -28,7 +28,7 @@ const exitManager = new ExitManager(prisma);
 async function main() {
     console.log('🦈 Sharkbot Copy Trading Bot');
     console.log('============================');
-    console.log(`Target: ${COPY_CONFIG.WHALE_ADDRESS}`);
+    console.log(`Targets: ${COPY_CONFIG.WHALE_ADDRESSES.join(', ')}`);
     console.log(`Entry range: ${COPY_CONFIG.ENTRY.MIN_PRICE * 100}% - ${COPY_CONFIG.ENTRY.MAX_PRICE * 100}%`);
     console.log(`Position size: L1=$${COPY_CONFIG.POSITION.L1_SIZE}, L2=$${COPY_CONFIG.POSITION.L2_SIZE}`);
     console.log(`Max exposure: $${COPY_CONFIG.RISK.MAX_EXPOSURE}`);

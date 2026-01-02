@@ -13,7 +13,7 @@ import { WhaleTrade, GammaMarket, ParsedGammaMarket, CopySignal, ClobMarket } fr
 export class WhaleTracker {
     private prisma: PrismaClient;
     private isRunning = false;
-    private lastProcessedTimestamp = 0;
+    private lastProcessedTimestamp: Map<string, number> = new Map();
     private gameStartTimeCache: Map<string, Date | null> = new Map();
 
     constructor(prisma: PrismaClient) {
@@ -83,11 +83,14 @@ export class WhaleTracker {
     /**
      * Fetch recent trades from the whale
      */
-    async fetchWhaleTrades(limit = 50): Promise<WhaleTrade[]> {
+    /**
+     * Fetch recent trades from the whale
+     */
+    async fetchWhaleTrades(address: string, limit = 50): Promise<WhaleTrade[]> {
         const url = `${COPY_CONFIG.API.DATA}/trades`;
         const response = await axios.get<WhaleTrade[]>(url, {
             params: {
-                user: COPY_CONFIG.WHALE_ADDRESS,
+                user: address,
                 limit,
             },
         });
@@ -312,21 +315,30 @@ export class WhaleTracker {
      */
     async poll(): Promise<void> {
         try {
-            const trades = await this.fetchWhaleTrades(20);
+            for (const address of COPY_CONFIG.WHALE_ADDRESSES) {
+                // Get last processed timestamp for this whale, default to 0
+                const lastProcessed = this.lastProcessedTimestamp.get(address) || 0;
 
-            // Process newest first (they come sorted by timestamp desc)
-            for (const trade of trades) {
-                // Skip if we've already processed trades up to this timestamp
-                if (trade.timestamp <= this.lastProcessedTimestamp) {
-                    continue;
+                const trades = await this.fetchWhaleTrades(address, 20);
+
+                // Process newest first (they come sorted by timestamp desc)
+                let maxTimestamp = lastProcessed;
+
+                for (const trade of trades) {
+                    // Skip if we've already processed trades up to this timestamp
+                    if (trade.timestamp <= lastProcessed) {
+                        continue;
+                    }
+
+                    await this.processTrade(trade);
+
+                    if (trade.timestamp > maxTimestamp) {
+                        maxTimestamp = trade.timestamp;
+                    }
                 }
 
-                await this.processTrade(trade);
-            }
-
-            // Update last processed timestamp
-            if (trades.length > 0) {
-                this.lastProcessedTimestamp = trades[0].timestamp;
+                // Update last processed timestamp for this whale
+                this.lastProcessedTimestamp.set(address, maxTimestamp);
             }
         } catch (error) {
             console.error('[WhaleTracker] Poll error:', error);
