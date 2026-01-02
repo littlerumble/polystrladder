@@ -1,0 +1,86 @@
+/**
+ * Copy Trading Strategy Configuration
+ * 
+ * All strategy parameters in one place for easy tuning.
+ */
+
+export const COPY_CONFIG = {
+    // Target whale to copy
+    WHALE_ADDRESS: process.env.WHALE_ADDRESS || '0x2005d16a84ceefa912d4e380cd32e7ff827875ea',
+
+    // API endpoints
+    API: {
+        CLOB: process.env.CLOB_API_URL || 'https://clob.polymarket.com',
+        GAMMA: process.env.GAMMA_API_URL || 'https://gamma-api.polymarket.com',
+        DATA: process.env.DATA_API_URL || 'https://data-api.polymarket.com',
+    },
+
+    // Entry rules
+    ENTRY: {
+        MIN_PRICE: 0.65,      // Only copy if whale buys at >= 65%
+        MAX_PRICE: 0.85,      // Only copy if whale buys at <= 85%
+        MIN_WHALE_SIZE: 50,   // Ignore tiny trades (conviction filter)
+        ALLOWED_SIDES: ['BUY'] as const,  // Only copy buys
+        LIVE_ONLY: true,      // Only trade live games (game_start_time < now)
+    },
+
+    // Outcome filter - which outcomes we're willing to copy
+    // null = allow all, or specify ['No', 'Under'] etc.
+    OUTCOME_FILTER: null as string[] | null,
+
+    // Position sizing (paper trade amounts)
+    POSITION: {
+        L1_SIZE: 100,         // Initial entry: $100
+        L2_SIZE: 75,          // DCA at -5%: $75
+        L2_TRIGGER_PCT: -5,   // DCA trigger: -5% from entry
+        MAX_PER_MARKET: 175,  // Max total per market: $175
+    },
+
+    // Take profit (trailing)
+    TAKE_PROFIT: {
+        TRIGGER_PCT: 12,      // Enable trailing when +12%
+        TRAIL_PCT: 4,         // Exit when drops 4% from peak
+        HARD_CAP_PRICE: 0.95, // Always exit at 95% (too risky above)
+    },
+
+    // Stop loss
+    STOP_LOSS: {
+        TRIGGER_PCT: -12,     // Exit at -12%
+    },
+
+    // Other exit conditions
+    EXIT: {
+        TIME_REMAINING_MINUTES: 10,  // Exit if <10 min left in game
+        STAGNATION_MINUTES: 30,      // Exit if price moves <2% in 30 min
+        STAGNATION_THRESHOLD_PCT: 2,
+    },
+
+    // Risk limits
+    RISK: {
+        MAX_EXPOSURE: 1500,       // Max total $ in open positions
+        MAX_CONCURRENT_MARKETS: 10,
+        DAILY_LOSS_CAP: 300,      // Pause trading if down $300 today
+    },
+
+    // Polling intervals (milliseconds)
+    POLLING: {
+        WHALE_TRADES_MS: 5000,    // Check for new whale trades every 5s
+        PRICE_UPDATE_MS: 2000,    // Update prices every 2s (user requested)
+        EXIT_CHECK_MS: 2000,      // Check exit conditions every 2s
+    },
+
+    // What to ignore
+    IGNORE: {
+        MAX_PRICE: 0.90,          // Skip trades above 90%
+        MIN_PRICE: 0.10,          // Skip trades below 10% (lottery)
+        // Markets to skip (e.g., esports)
+        SLUG_PATTERNS: [
+            'lol-',                 // League of Legends
+            'cs2-',                 // Counter-Strike
+            'valorant-',            // Valorant
+        ],
+    },
+};
+
+// Type exports for use in other files
+export type CopyConfig = typeof COPY_CONFIG;

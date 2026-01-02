@@ -1,0 +1,123 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Markets the whale is trading - we track these for prices and signals
+model TrackedMarket {
+  id              String   @id @default(uuid())
+  
+  // From whale trade API (primary identifiers)
+  conditionId     String   @unique
+  slug            String
+  eventSlug       String?
+  title           String   @db.Text
+  
+  // Token info - CRITICAL: store the actual outcome name with the token
+  tokenId         String   @db.VarChar(100)  // the asset from whale trade
+  outcome         String                      // Yes, No, Over, Under, Team Name
+  outcomeIndex    Int                         // 0 or 1
+  
+  // Whale's entry (first trade we saw)
+  whalePrice      Float
+  whaleSize       Float
+  whaleSide       String   // BUY or SELL
+  whaleTimestamp  DateTime
+  whaleTxHash     String?  @db.VarChar(100)
+  
+  // Live price data (polled from CLOB midpoint)
+  currentPrice    Float?
+  lastPriceUpdate DateTime?
+  
+  // Market metadata (from Gamma/CLOB)
+  endDate         DateTime?
+  isActive        Boolean  @default(true)
+  isClosed        Boolean  @default(false)
+  
+  // Copy eligibility status
+  copyEligible    Boolean  @default(false)
+  copyReason      String?  @db.VarChar(255)  // "ELIGIBLE: 72% in range" or "SKIP: price 91% > 85%"
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  paperTrades     PaperTrade[]
+  
+  @@index([conditionId])
+  @@index([copyEligible])
+}
+
+// Our simulated paper trades
+model PaperTrade {
+  id              String   @id @default(uuid())
+  
+  // Link to tracked market
+  marketId        String
+  market          TrackedMarket @relation(fields: [marketId], references: [id])
+  
+  // Entry details
+  entryPrice      Float              // price we "entered" at
+  entryTime       DateTime @default(now())
+  shares          Float              // costBasis / entryPrice
+  costBasis       Float              // $100 or $75
+  ladderLevel     Int      @default(1)  // 1 = initial, 2 = DCA
+  
+  // Live tracking
+  currentPrice    Float              // updated by price poller
+  unrealizedPnl   Float              // (currentPrice - entryPrice) * shares
+  unrealizedPct   Float              // unrealizedPnl / costBasis * 100
+  
+  // Trailing take profit
+  highWaterMark   Float?             // highest price seen
+  trailingActive  Boolean  @default(false)  // true when +12% triggered
+  
+  // Exit details (filled when closed)
+  exitPrice       Float?
+  exitTime        DateTime?
+  exitReason      String?  @db.VarChar(50)  // TP_TRAIL, STOP_LOSS, WHALE_DUMP, TIME_STOP, STAGNATION
+  realizedPnl     Float?
+  realizedPct     Float?
+  holdTimeMinutes Int?
+  
+  // Status
+  status          String   @default("OPEN")  // OPEN, CLOSED
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([marketId])
+  @@index([status])
+}
+
+// Track whale trade history (for reference/debugging)
+model WhaleTradeLog {
+  id              String   @id @default(uuid())
+  
+  // Raw trade data from API
+  conditionId     String
+  tokenId         String   @db.VarChar(100)
+  slug            String
+  title           String   @db.Text
+  outcome         String
+  outcomeIndex    Int
+  side            String   // BUY or SELL
+  price           Float
+  size            Float
+  timestamp       DateTime
+  txHash          String?  @db.VarChar(100)
+  
+  // Processing status
+  processed       Boolean  @default(false)
+  processedAt     DateTime?
+  
+  createdAt       DateTime @default(now())
+  
+  @@unique([txHash])
+  @@index([conditionId])
+  @@index([processed])
+}
