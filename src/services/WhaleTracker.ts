@@ -351,6 +351,34 @@ export class WhaleTracker {
     }
 
     /**
+     * Backfill missing copier info for existing markets
+     * Assumes "Unknown" markets belong to the Original Whale (first address)
+     */
+    async backfillCopierInfo(): Promise<void> {
+        try {
+            const originalWhale = COPY_CONFIG.WHALE_ADDRESSES[0];
+            const originalName = COPY_CONFIG.WHALE_NAMES[originalWhale];
+
+            // Update TrackedMarkets where copierAddress is null
+            const result = await this.prisma.trackedMarket.updateMany({
+                where: {
+                    copierAddress: null,
+                },
+                data: {
+                    copierAddress: originalWhale,
+                    copierName: originalName,
+                },
+            });
+
+            if (result.count > 0) {
+                console.log(`[WhaleTracker] Backfilled ${result.count} markets with original whale info.`);
+            }
+        } catch (error) {
+            console.error('[WhaleTracker] Backfill error:', error);
+        }
+    }
+
+    /**
      * Start polling loop
      */
     start(): void {
@@ -358,6 +386,9 @@ export class WhaleTracker {
 
         this.isRunning = true;
         console.log('[WhaleTracker] Started polling...');
+
+        // Run backfill once on start
+        this.backfillCopierInfo();
 
         // Initial poll
         this.poll();
