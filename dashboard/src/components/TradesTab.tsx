@@ -83,6 +83,7 @@ export function TradesTab() {
                         <thead>
                             <tr>
                                 <th>Market</th>
+                                <th>Trader</th>
                                 <th>Side</th>
                                 <th>Entry → Exit</th>
                                 <th>Invested</th>
@@ -100,6 +101,16 @@ export function TradesTab() {
                                                 {trade.market?.title.slice(0, 40) || 'Unknown'}
                                                 {(trade.market?.title.length || 0) > 40 ? '...' : ''}
                                             </span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div className="trader-info">
+                                            <span className="trader-name">{trade.market?.copierName || 'Unknown'}</span>
+                                            {trade.market?.copierAddress && trade.market?.copierName !== trade.market?.copierAddress && (
+                                                <span className="trader-addr" style={{ fontSize: '0.7em', color: 'var(--text-secondary)', display: 'block' }}>
+                                                    {trade.market?.copierAddress.slice(0, 6)}...
+                                                </span>
+                                            )}
                                         </div>
                                     </td>
                                     <td>
