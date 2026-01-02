@@ -277,6 +277,8 @@ export class WhaleTracker {
                     whaleSide: trade.side,
                     whaleTimestamp: new Date(trade.timestamp * 1000),
                     whaleTxHash: trade.transactionHash,
+                    copierAddress: trade.proxyWallet,
+                    copierName: COPY_CONFIG.WHALE_NAMES[trade.proxyWallet] || trade.proxyWallet.slice(0, 8),
                     currentPrice: trade.price,
                     lastPriceUpdate: new Date(),
                     copyEligible: signal.type === 'ELIGIBLE',
@@ -297,6 +299,9 @@ export class WhaleTracker {
                         // Update eligibility based on latest price
                         copyEligible: signal.type === 'ELIGIBLE',
                         copyReason: signal.reason,
+                        // Ensure copier info is set if missing (for existing records)
+                        copierAddress: trade.proxyWallet,
+                        copierName: COPY_CONFIG.WHALE_NAMES[trade.proxyWallet] || trade.proxyWallet.slice(0, 8),
                     },
                 });
                 console.log(`[WhaleTracker] Updated market: ${trade.title.slice(0, 50)}...`);

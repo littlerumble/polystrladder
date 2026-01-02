@@ -12,6 +12,13 @@ export const COPY_CONFIG = {
         '0x0d3b10b8eac8b089c6e4a695e65d8e044167c46b',
     ],
 
+    // Friendly names for display
+    WHALE_NAMES: {
+        '0x2005d16a84ceefa912d4e380cd32e7ff827875ea': 'Original Whale',
+        '0x6a72f61820b26b1fe4d956e17b6dc2a1ea3033ee': 'kch123',
+        '0x0d3b10b8eac8b089c6e4a695e65d8e044167c46b': 'bossoskil',
+    } as Record<string, string>,
+
     // API endpoints
     API: {
         CLOB: process.env.CLOB_API_URL || 'https://clob.polymarket.com',

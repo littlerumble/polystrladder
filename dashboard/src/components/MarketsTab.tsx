@@ -43,6 +43,7 @@ export function MarketsTab() {
                         <th>Market</th>
                         <th>Outcome</th>
                         <th>Whale Entry</th>
+                        <th>Trader</th>
                         <th>Current Price</th>
                         <th>Status</th>
                         <th>Signal</th>
@@ -62,6 +63,16 @@ export function MarketsTab() {
                                 <span className="badge buy">{market.outcome}</span>
                             </td>
                             <td>{formatPrice(market.whalePrice)}</td>
+                            <td>
+                                <div className="trader-info">
+                                    <span className="trader-name">{market.copierName || 'Unknown'}</span>
+                                    {market.copierAddress && market.copierName !== market.copierAddress && (
+                                        <span className="trader-addr" style={{ fontSize: '0.7em', color: 'var(--text-secondary)', display: 'block' }}>
+                                            {market.copierAddress.slice(0, 6)}...
+                                        </span>
+                                    )}
+                                </div>
+                            </td>
                             <td>
                                 <span className={market.currentPrice && market.currentPrice > market.whalePrice ? 'pnl positive' : market.currentPrice && market.currentPrice < market.whalePrice ? 'pnl negative' : ''}>
                                     {formatPrice(market.currentPrice)}

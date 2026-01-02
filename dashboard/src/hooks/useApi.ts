@@ -20,6 +20,8 @@ export interface TrackedMarket {
     isClosed: boolean
     copyEligible: boolean
     copyReason: string | null
+    copierAddress?: string
+    copierName?: string
     createdAt: string
     paperTrades?: PaperTrade[]
 }
