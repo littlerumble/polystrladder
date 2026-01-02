@@ -8,12 +8,11 @@ import PortfolioCard from './components/PortfolioCard';
 import MarketScanner from './components/MarketScanner';
 import Positions from './components/Positions';
 import TradeHistory from './components/TradeHistory';
-import StrategyEvents from './components/StrategyEvents';
 import DecisionPanel from './components/DecisionPanel';
 import MarketTradesPanel from './components/MarketTradesPanel';
 import TraderTracker from './components/TraderTracker';
 
-type TabType = 'scanner' | 'positions' | 'trades' | 'm-trades' | 'strategy' | 'tracker';
+type TabType = 'scanner' | 'positions' | 'trades' | 'm-trades' | 'tracker';
 
 function App() {
     const [activeTab, setActiveTab] = useState<TabType>('scanner');
@@ -95,13 +94,6 @@ function App() {
                         <span className="badge">{api.trades.length}</span>
                     </button>
                     <button
-                        className={`tab-btn ${activeTab === 'strategy' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('strategy')}
-                    >
-                        Strategy Events
-                        <span className="badge">{api.strategyEvents.length}</span>
-                    </button>
-                    <button
                         className={`tab-btn ${activeTab === 'tracker' ? 'active' : ''}`}
                         onClick={() => setActiveTab('tracker')}
                     >
@@ -125,9 +117,6 @@ function App() {
                     )}
                     {activeTab === 'trades' && (
                         <TradeHistory trades={api.trades} />
-                    )}
-                    {activeTab === 'strategy' && (
-                        <StrategyEvents events={api.strategyEvents} />
                     )}
                     {activeTab === 'tracker' && (
                         <TraderTracker />

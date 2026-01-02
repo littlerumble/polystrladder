@@ -12,6 +12,7 @@ import { configService } from '../config/configService.js';
 import eventBus from '../core/eventBus.js';
 
 const DATA_API_BASE = 'https://data-api.polymarket.com';
+const CLOB_API_BASE = 'https://clob.polymarket.com';
 
 // Tracked traders
 const TRACKED_WALLETS = [
@@ -40,6 +41,8 @@ interface TradeActivity {
     conditionId: string;
     title: string;
     slug: string;
+    tokenId: string;        // CLOB token_id (asset) for real-time prices
+    outcomeIndex: number;   // 0 or 1 for YES/NO mapping
     outcome: string;
     side: 'BUY' | 'SELL';
     price: number;
@@ -50,6 +53,7 @@ export class CopyTradeDetector {
     private prisma: PrismaClient;
     private pollInterval: NodeJS.Timeout | null = null;
     private lastSeenTimestamp: Map<string, number> = new Map();
+    private skippedClosedMarkets: Set<string> = new Set();  // Track skipped closed markets
     private enabled: boolean = true;
 
     constructor(prisma: PrismaClient) {
@@ -134,14 +138,17 @@ export class CopyTradeDetector {
                         continue;
                     }
 
-                    // CRITICAL FIX: Fetch CURRENT price. If fails, DO NOT TRADE.
-                    const currentPrice = await this.fetchCurrentPrice(trade.conditionId, trade.outcome, trade.slug);
+                    // CRITICAL FIX: Fetch CURRENT price from CLOB using tokenId. If fails, DO NOT TRADE.
+                    const currentPrice = await this.fetchCurrentPriceFromClob(trade.tokenId);
 
                     if (currentPrice === null) {
-                        logger.warn(`⚠️ Could not fetch current price for ${trade.title}, skipping copy trade.`, {
-                            conditionId: trade.conditionId,
-                            slug: trade.slug
-                        });
+                        // Only warn once per market to avoid spam
+                        if (!this.skippedClosedMarkets.has(trade.conditionId)) {
+                            this.skippedClosedMarkets.add(trade.conditionId);
+                            logger.warn(`⚠️ Market closed or no orderbook for ${trade.title}, skipping.`, {
+                                slug: trade.slug
+                            });
+                        }
                         continue;
                     }
 
@@ -158,17 +165,19 @@ export class CopyTradeDetector {
                     const strategyType: 'STANDARD' | 'LOTTERY' = inLotteryRange ? 'LOTTERY' : 'STANDARD';
                     const status = inRange ? 'IN_RANGE' : 'WATCHING';
 
-                    // Store in TrackedMarket table
+                    // Store in TrackedMarket table with tokenId for CLOB price lookup
                     await this.prisma.trackedMarket.create({
                         data: {
                             conditionId: trade.conditionId,
-                            slug: trade.slug,           // Store slug
+                            slug: trade.slug,
+                            tokenId: trade.tokenId,         // CLOB token for real-time prices
+                            outcomeIndex: trade.outcomeIndex, // For YES/NO mapping
                             title: trade.title,
                             outcome: trade.outcome,
                             traderName: trader.name,
                             traderWallet: trader.wallet,
-                            trackedPrice: trade.price,     // Original trader entry
-                            currentPrice: priceToCheck,    // Current market price
+                            trackedPrice: trade.price,
+                            currentPrice: priceToCheck,
                             status: status,
                             signalTime: new Date(trade.timestamp * 1000),
                             enteredRangeAt: inRange ? new Date() : null
@@ -237,10 +246,15 @@ export class CopyTradeDetector {
 
         for (const tracked of watchingMarkets) {
             try {
-                // Fetch current price correctly handling outcome
-                const currentPrice = await this.fetchCurrentPrice(tracked.conditionId, tracked.outcome, tracked.slug);
+                // Skip if no tokenId - legacy data without CLOB token
+                if (!tracked.tokenId) {
+                    continue;
+                }
 
-                if (currentPrice === null) continue;
+                // CRITICAL: Fetch CURRENT price from CLOB using tokenId
+                const currentPrice = await this.fetchCurrentPriceFromClob(tracked.tokenId);
+
+                if (currentPrice === null) { continue; }
 
                 // Update current price
                 await this.prisma.trackedMarket.update({
@@ -295,75 +309,40 @@ export class CopyTradeDetector {
     }
 
     /**
-     * Helper to fetch current price for a specific outcome safely.
-     * Uses Gamma Markets/Events API via slug to find the market.
+     * Fetch current price from CLOB orderbook using token_id.
+     * Returns null if no orderbook exists (market is closed/resolved).
+     * NO FALLBACK - if CLOB fails, we skip this trade entirely.
      */
-    private async fetchCurrentPrice(conditionId: string, outcome: string, slug?: string): Promise<number | null> {
+    private async fetchCurrentPriceFromClob(tokenId: string): Promise<number | null> {
         try {
-            let gammaMarket = null;
+            const response = await axios.get(`${CLOB_API_BASE}/book`, {
+                params: { token_id: tokenId },
+                timeout: 5000
+            });
 
-            // 1. Try fetching by SLUG (Markets API) - Most precise if slug is Market Slug
-            if (slug) {
-                try {
-                    const response = await axios.get(`https://gamma-api.polymarket.com/markets?slug=${slug}`);
-                    if (Array.isArray(response.data) && response.data.length > 0) {
-                        // Find specific market if multiple (unlikely for slug) or just take first matching conditionId
-                        gammaMarket = response.data.find((m: any) => m.conditionId === conditionId);
-                        if (!gammaMarket) gammaMarket = response.data[0]; // Fallback to first if conditionId not found (unlikely)
-                    }
-                } catch (e) {
-                    // Ignore
-                }
-
-                // 2. Fallback: Try fetching by SLUG (Events API) - If slug is Event Slug
-                if (!gammaMarket) {
-                    try {
-                        const response = await axios.get(`https://gamma-api.polymarket.com/events?slug=${slug}`);
-                        if (Array.isArray(response.data) && response.data.length > 0) {
-                            const event = response.data[0];
-                            if (event.markets && Array.isArray(event.markets)) {
-                                gammaMarket = event.markets.find((m: any) => m.conditionId === conditionId);
-                            }
-                        }
-                    } catch (e) {
-                        // Ignore
-                    }
-                }
+            // Check for "No orderbook exists" error - market is closed
+            if (response.data?.error) {
+                logger.debug('Market orderbook not found (likely closed)', { tokenId });
+                return null;
             }
 
-            // 3. Fallback: Try fetching by Condition ID directly (Gamma API usually fails this, but keeps it as last resort)
-            if (!gammaMarket) {
-                try {
-                    const response = await axios.get(`https://gamma-api.polymarket.com/markets/${conditionId}`);
-                    gammaMarket = response.data;
-                } catch (e) {
-                    // Fail
-                }
+            // Get best bid (highest price a buyer is willing to pay)
+            if (response.data?.bids?.length > 0) {
+                const bestBid = response.data.bids[response.data.bids.length - 1];
+                return parseFloat(bestBid.price);
             }
 
-            if (!gammaMarket || !gammaMarket.outcomePrices) return null;
-
-            const prices = typeof gammaMarket.outcomePrices === 'string'
-                ? JSON.parse(gammaMarket.outcomePrices)
-                : gammaMarket.outcomePrices;
-
-            const outcomes = gammaMarket.outcomes && typeof gammaMarket.outcomes === 'string'
-                ? JSON.parse(gammaMarket.outcomes)
-                : (gammaMarket.outcomes || ['Yes', 'No']);
-
-            // Find index of outcome
-            const index = outcomes.findIndex((o: string) => o.toLowerCase() === outcome.toLowerCase());
-
-            if (index !== -1 && prices[index] !== undefined) {
-                return parseFloat(prices[index]);
+            // If no bids, try asks
+            if (response.data?.asks?.length > 0) {
+                const bestAsk = response.data.asks[response.data.asks.length - 1];
+                return parseFloat(bestAsk.price);
             }
 
-            // Fallback for simple Yes/No if outcomes not found or matching
-            if (outcome.toLowerCase() === 'yes' && prices[0] !== undefined) return parseFloat(prices[0]);
-            if (outcome.toLowerCase() === 'no' && prices[1] !== undefined) return parseFloat(prices[1]);
-
+            // No bids or asks = market likely closed
             return null;
-        } catch (error) {
+        } catch (error: any) {
+            // Network error or timeout - could be temporary, return null to skip
+            logger.debug('CLOB price fetch failed', { tokenId, error: String(error) });
             return null;
         }
     }
@@ -391,6 +370,8 @@ export class CopyTradeDetector {
                 conditionId: t.conditionId,
                 title: t.title || 'Unknown Market',
                 slug: t.slug || '',
+                tokenId: t.asset || '',          // CLOB token_id for real-time prices
+                outcomeIndex: t.outcomeIndex ?? 0, // 0 or 1 for YES/NO mapping
                 outcome: t.outcome || 'Unknown',
                 side: t.side,
                 price: t.price || 0,

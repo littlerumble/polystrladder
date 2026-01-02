@@ -125,7 +125,7 @@ class TradingBot {
             // this.marketLoader.startPeriodicRefresh();  // DISABLED - not needed for copy trade
             this.startPnlSnapshots();
             this.startResolutionChecks();
-            this.startGammaPricePolling();  // ENABLED - CRITICAL for price updates!
+            this.startClobPricePolling();  // ENABLED - CRITICAL for price updates!
 
             // Start copy trade detector - THIS IS THE ONLY ENTRY POINT NOW
             this.copyTradeDetector.start();
@@ -330,12 +330,31 @@ class TradingBot {
                         });
                         logger.info('Added copy trade market to DB', { marketId: market.id });
 
-                        // Also set up token mapping
-                        if (clobTokenIds.length >= 2) {
-                            this.marketTokens.set(market.id, {
-                                yes: clobTokenIds[0],
-                                no: clobTokenIds[1]
-                            });
+                        // Also set up token mapping - CRITICAL: use outcomes array to determine YES vs NO
+                        if (clobTokenIds.length >= 2 && outcomes.length >= 2) {
+                            // clobTokenIds order matches outcomes order
+                            const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
+                            const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
+
+                            if (yesIndex !== -1 && noIndex !== -1) {
+                                this.marketTokens.set(market.id, {
+                                    yes: clobTokenIds[yesIndex],
+                                    no: clobTokenIds[noIndex]
+                                });
+                                logger.debug('Token mapping set correctly', {
+                                    marketId: market.id,
+                                    yesIndex,
+                                    noIndex,
+                                    outcomes
+                                });
+                            } else {
+                                // Fallback: assume standard order but log warning
+                                logger.warn('Non-standard outcomes, assuming clobTokenIds[0]=YES', { outcomes });
+                                this.marketTokens.set(market.id, {
+                                    yes: clobTokenIds[0],
+                                    no: clobTokenIds[1]
+                                });
+                            }
                         }
                     } catch (error) {
                         logger.error('Failed to fetch market for copy trade', { error: String(error) });
@@ -361,23 +380,40 @@ class TradingBot {
                     strategyLabel = `copy_${signal.traderName}`;
                 }
 
-                // Determine the token ID for the outcome we want
+                // Determine the token ID and side for the outcome the trader bought
                 let tokenId = '';
+                let side: Side = Side.YES;
                 const tokens = this.marketTokens.get(market.id);
+
+                // Match the outcome the trader bought
+                const isYesOutcome = signal.outcome.toLowerCase() === 'yes';
+
                 if (tokens) {
-                    // Use YES token for now (copy trade is always betting on the outcome)
-                    tokenId = tokens.yes;
+                    tokenId = isYesOutcome ? tokens.yes : tokens.no;
+                    side = isYesOutcome ? Side.YES : Side.NO;
                 } else {
-                    // Try to get from market data
+                    // Try to get from market data - need to parse outcomes to match
                     const clobTokenIds = JSON.parse(market.clobTokenIds);
-                    tokenId = clobTokenIds[0] || '';
+                    const outcomes = JSON.parse(market.outcomes);
+                    const outcomeIndex = outcomes.findIndex((o: string) =>
+                        o.toLowerCase() === signal.outcome.toLowerCase()
+                    );
+                    tokenId = outcomeIndex !== -1 ? clobTokenIds[outcomeIndex] : clobTokenIds[0];
+                    side = isYesOutcome ? Side.YES : Side.NO;
                 }
+
+                logger.debug('Copy trade token selection', {
+                    signalOutcome: signal.outcome,
+                    isYesOutcome,
+                    side,
+                    tokenId: tokenId.substring(0, 20) + '...'
+                });
 
                 // Create the order as ProposedOrder for risk check
                 const proposedOrder: ProposedOrder = {
                     marketId: market.id,
                     tokenId: tokenId,
-                    side: Side.YES, // Copy trades always buy the YES side of the signaled outcome
+                    side: side,  // Use the correct side matching signal.outcome
                     price: signal.price,
                     sizeUsdc: sizePerTrade,
                     shares: sizePerTrade / signal.price,
@@ -1150,19 +1186,33 @@ class TradingBot {
         logger.info(`Found ${openTrades.length} open trades, loading their markets...`);
 
         for (const trade of openTrades) {
+            const marketId = trade.marketId;
+            if (!marketId) continue;
+
+            // Skip if already loaded
+            if (this.marketStates.has(marketId)) {
+                continue;
+            }
+
+            // For copy trades without Market record, use tokenId from MarketTrade
+            if (!trade.market && trade.tokenId) {
+                // Initialize basic market state
+                await this.initializeMarketState(marketId);
+
+                // Set tokenId directly (same for both sides since we only have YES token for copy trades)
+                this.marketTokens.set(marketId, {
+                    yes: trade.tokenId,
+                    no: trade.tokenId  // NO token = 1 - YES price, so we can use same token
+                });
+                continue;
+            }
+
             if (!trade.market) {
-                logger.warn(`Trade #${trade.id} has no market data`, { marketId: trade.marketId });
+                logger.warn(`Trade #${trade.id} has no market data and no tokenId`, { marketId: trade.marketId });
                 continue;
             }
 
             const market = trade.market;
-            const marketId = market.id;
-
-            // Skip if already loaded
-            if (this.marketStates.has(marketId)) {
-                logger.debug(`Market ${marketId} already loaded`);
-                continue;
-            }
 
             // Initialize market state
             await this.initializeMarketState(marketId);
@@ -1322,30 +1372,30 @@ class TradingBot {
      */
     private gammaPriceInterval: NodeJS.Timeout | null = null;
 
-    private startGammaPricePolling(): void {
+    private startClobPricePolling(): void {
         const pollInterval = 1000; // 1 second for faster updates
 
         this.gammaPriceInterval = setInterval(async () => {
             try {
-                await this.pollGammaPrices();
+                await this.pollClobPrices();
             } catch (error) {
-                logger.error('Failed to poll Gamma prices', { error: String(error) });
+                logger.error('Failed to poll CLOB prices', { error: String(error) });
             }
         }, pollInterval);
 
         // Run immediately on startup
-        this.pollGammaPrices().catch(err => {
-            logger.error('Initial Gamma price poll failed', { error: String(err) });
+        this.pollClobPrices().catch((err: Error) => {
+            logger.error('Initial CLOB price poll failed', { error: String(err) });
         });
 
-        logger.info('Started Gamma price polling every 1s (parallel config)');
+        logger.info('Started CLOB price polling every 1s (parallel config)');
     }
 
     /**
-     * Poll Gamma API for accurate prices and update market states.
-     * Uses parallel execution (concurrency 10) to speed up updates.
+     * Poll CLOB API for real-time prices and update market states.
+     * Uses tokenIds from marketTokens map for direct orderbook lookups.
      */
-    private async pollGammaPrices(): Promise<void> {
+    private async pollClobPrices(): Promise<void> {
         const marketIds = Array.from(this.marketStates.keys());
 
         // Process in batches of 10 to avoid rate limits but maximize speed
@@ -1362,49 +1412,45 @@ class TradingBot {
                     return; // WS is active, skip API call
                 }
 
+                const tokens = this.marketTokens.get(marketId);
+                if (!tokens?.yes) return; // No token to query
+
                 try {
+                    // Fetch CLOB orderbook for YES token
                     const response = await axios.get(
-                        `https://gamma-api.polymarket.com/markets/${marketId}`,
-                        { timeout: 3000 } // Reduced timeout
+                        `https://clob.polymarket.com/book`,
+                        {
+                            params: { token_id: tokens.yes },
+                            timeout: 3000
+                        }
                     );
 
-                    const marketData = response.data;
-                    if (!marketData.outcomePrices) return;
-
-                    const prices = JSON.parse(marketData.outcomePrices);
-                    const outcomes = marketData.outcomes ? JSON.parse(marketData.outcomes) : ['Yes', 'No'];
-                    const yesIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'yes');
-                    const noIndex = outcomes.findIndex((o: string) => o.toLowerCase() === 'no');
-
-                    let priceYes: number;
-                    let priceNo: number;
-                    if (yesIndex !== -1 && noIndex !== -1) {
-                        priceYes = parseFloat(prices[yesIndex]);
-                        priceNo = parseFloat(prices[noIndex]);
-                    } else {
-                        priceYes = parseFloat(prices[0]);
-                        priceNo = parseFloat(prices[1]);
+                    // Get best bid price from orderbook
+                    let priceYes: number | null = null;
+                    if (response.data?.bids?.length > 0) {
+                        const bestBid = response.data.bids[response.data.bids.length - 1];
+                        priceYes = parseFloat(bestBid.price);
+                    } else if (response.data?.asks?.length > 0) {
+                        const bestAsk = response.data.asks[response.data.asks.length - 1];
+                        priceYes = parseFloat(bestAsk.price);
                     }
 
-                    if (isNaN(priceYes) || isNaN(priceNo)) return;
+                    if (priceYes === null || isNaN(priceYes)) return;
+                    const priceNo = 1 - priceYes;
 
-                    // Update the in-memory market state with accurate Gamma prices
+                    // Update the in-memory market state with CLOB prices
                     const state = this.marketStates.get(marketId);
                     if (state) {
-                        const tokens = this.marketTokens.get(marketId);
-
-                        // Create a synthetic price update with Gamma data
+                        // Create a synthetic price update with CLOB data
                         const update: PriceUpdate = {
                             marketId,
-                            tokenId: tokens?.yes || marketId,
+                            tokenId: tokens.yes,
                             priceYes,
                             priceNo,
                             timestamp: new Date()
                         };
 
                         // Process through the regular trading loop
-                        // Note: handlePriceUpdate expects PriceUpdate with bestBid/Ask if available
-                        // Gamma doesn't give Bids/Asks, just last/mid. That's fine.
                         await this.handlePriceUpdate(update);
                     }
                 } catch (error) {

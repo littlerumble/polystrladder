@@ -72,6 +72,7 @@ model MarketTrade {
   
   // Copy trading flag
   isCopyTrade     Boolean   @default(false)  // True if opened from tracked trader signal
+  tokenId         String?   // CLOB token_id for real-time price lookup
   
   @@index([marketId])
   @@index([status])
@@ -184,7 +185,9 @@ model TrackedMarket {
   id              Int       @id @default(autoincrement())
   conditionId     String    @unique  // Polymarket condition ID
   marketId        String?   // FK to Market if synced
-  slug            String    // Event slug
+  slug            String    // Market slug for Gamma metadata
+  tokenId         String?   // CLOB token_id (asset) for real-time price lookup
+  outcomeIndex    Int?      // 0 or 1 - for YES/NO mapping
   title           String    @db.Text
   outcome         String    // Which outcome the tracker bought
   traderName      String

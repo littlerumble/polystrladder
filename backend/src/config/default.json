@@ -481,7 +481,7 @@
     "copyTradePct": 0.05,
     "copyTradeMax": 100,
     "copyTradeLottery": {
-        "enabled": true,
+        "enabled": false,
         "maxPrice": 0.05,
         "investmentSize": 5,
         "profitTargetPct": 0.20,
