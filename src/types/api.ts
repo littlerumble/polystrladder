@@ -111,7 +111,7 @@ export interface PriceUpdate {
 }
 
 export interface ExitSignal {
-    type: 'TP_TRAIL' | 'STOP_LOSS' | 'WHALE_DUMP' | 'TIME_STOP' | 'STAGNATION' | 'HARD_CAP';
+    type: 'TP_TRAIL' | 'STOP_LOSS' | 'WHALE_DUMP' | 'TIME_STOP' | 'STAGNATION' | 'HARD_CAP' | 'RECOVERY';
     reason: string;
     paperTradeId: string;
     exitPrice: number;

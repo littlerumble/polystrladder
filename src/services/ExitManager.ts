@@ -124,6 +124,33 @@ export class ExitManager {
             };
         }
 
+        // 3.5 RECOVERY EXIT: If trade went into loss but is now back in profit, exit immediately
+        // This protects gains after a recovery - don't risk going back into loss
+        const wasInLoss = (trade.highWaterMark || entryPrice) > entryPrice && currentPrice < (trade.highWaterMark || entryPrice);
+        // Check if we were ever significantly in loss (price dropped below entry) and now recovered
+        if (profitPct > 0 && profitPct < COPY_CONFIG.TAKE_PROFIT.TRIGGER_PCT) {
+            // Trade is in profit but hasn't triggered trailing yet
+            // Check if it previously went negative (entry was above low point)
+            // We use a simple heuristic: if current profit is small (0-3%) and price previously dropped
+            // below entry (we don't track low water mark, so check if high water mark exists and is higher than current)
+            // Actually, let's track this differently: if trailing is NOT active but we're in profit,
+            // and there's a gap between entry and high water mark, trade recovered
+            if (highWaterMark && highWaterMark > currentPrice && currentPrice > entryPrice) {
+                // Trade went UP to highWaterMark, then came DOWN, now above entry
+                // This is a recovery situation - exit to protect small profit
+                const dropFromPeak = ((highWaterMark - currentPrice) / highWaterMark) * 100;
+                if (dropFromPeak >= 5) {
+                    // Significant drop from peak but still in profit - exit!
+                    return {
+                        type: 'RECOVERY',
+                        reason: `Recovery exit: +${profitPct.toFixed(1)}% profit after ${dropFromPeak.toFixed(1)}% drop from peak`,
+                        paperTradeId: trade.id,
+                        exitPrice: currentPrice,
+                    };
+                }
+            }
+        }
+
         // 4. Time stop - check if market is ending soon
         if (market.endDate) {
             const minutesRemaining = (market.endDate.getTime() - Date.now()) / (1000 * 60);
