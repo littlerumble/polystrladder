@@ -59,7 +59,7 @@ export const COPY_CONFIG = {
 
     // Stop loss
     STOP_LOSS: {
-        TRIGGER_PCT: -40,     // Exit at -40%
+        TRIGGER_PCT: -20,     // Exit at -20%
     },
 
     // Other exit conditions
@@ -89,6 +89,16 @@ export const COPY_CONFIG = {
         MIN_PRICE: 0.10,          // Skip trades below 10% (lottery)
         // Markets to skip (empty = allow all)
         SLUG_PATTERNS: [],
+    },
+
+    // Esports-specific rules (different from regular sports)
+    ESPORTS: {
+        // Patterns to detect esports markets
+        SLUG_PATTERNS: ['cs2-', 'lol-', 'valorant-', 'dota-', 'counter-strike'],
+        // Fixed take profit (exit immediately at this profit %)
+        FIXED_TP_PCT: 14,
+        // Wider stop loss for volatile esports
+        STOP_LOSS_PCT: -25,
     },
 };
 

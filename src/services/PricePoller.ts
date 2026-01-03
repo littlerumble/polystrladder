@@ -110,10 +110,6 @@ export class PricePoller {
             const profitPct = ((currentPrice - trade.entryPrice) / trade.entryPrice) * 100;
             const shouldActivateTrailing = profitPct >= COPY_CONFIG.TAKE_PROFIT.TRIGGER_PCT;
 
-            // Track if trade ever went into loss (price below entry)
-            const isNowInLoss = currentPrice < trade.entryPrice;
-            const wasInLoss = trade.wasInLoss || isNowInLoss;
-
             await this.prisma.paperTrade.update({
                 where: { id: trade.id },
                 data: {
@@ -122,7 +118,6 @@ export class PricePoller {
                     unrealizedPct,
                     highWaterMark: newHighWaterMark,
                     trailingActive: trade.trailingActive || shouldActivateTrailing,
-                    wasInLoss,
                 },
             });
         }

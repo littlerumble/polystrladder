@@ -64,6 +64,16 @@ export class ExitManager {
     }
 
     /**
+     * Check if a market is an esports market
+     */
+    isEsports(slug: string): boolean {
+        const lowerSlug = slug.toLowerCase();
+        return COPY_CONFIG.ESPORTS.SLUG_PATTERNS.some(pattern =>
+            lowerSlug.includes(pattern.toLowerCase())
+        );
+    }
+
+    /**
      * Check all exit conditions for a trade
      */
     async checkExitConditions(trade: PaperTradeWithMarket): Promise<ExitSignal | null> {
@@ -76,6 +86,27 @@ export class ExitManager {
         this.recordPrice(market.id, currentPrice);
 
         const profitPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+        const isEsports = this.isEsports(market.slug);
+
+        // ESPORTS: Fixed take profit at 14%
+        if (isEsports && profitPct >= COPY_CONFIG.ESPORTS.FIXED_TP_PCT) {
+            return {
+                type: 'TP_FIXED',
+                reason: `Esports fixed TP: ${profitPct.toFixed(1)}% >= ${COPY_CONFIG.ESPORTS.FIXED_TP_PCT}%`,
+                paperTradeId: trade.id,
+                exitPrice: currentPrice,
+            };
+        }
+
+        // ESPORTS: Wider stop loss at -25%
+        if (isEsports && profitPct <= COPY_CONFIG.ESPORTS.STOP_LOSS_PCT) {
+            return {
+                type: 'STOP_LOSS',
+                reason: `Esports stop loss: ${profitPct.toFixed(1)}% <= ${COPY_CONFIG.ESPORTS.STOP_LOSS_PCT}%`,
+                paperTradeId: trade.id,
+                exitPrice: currentPrice,
+            };
+        }
 
         // 1. Hard cap - exit at 95%
         if (currentPrice >= COPY_CONFIG.TAKE_PROFIT.HARD_CAP_PRICE) {
@@ -119,17 +150,6 @@ export class ExitManager {
             return {
                 type: 'STOP_LOSS',
                 reason: `Stop loss hit: ${profitPct.toFixed(1)}% loss`,
-                paperTradeId: trade.id,
-                exitPrice: currentPrice,
-            };
-        }
-
-        // 3.5 RECOVERY EXIT: If trade was ever in loss and is now back in ANY profit, exit immediately
-        // This locks in the recovery - don't risk going back into loss
-        if (trade.wasInLoss && profitPct > 0) {
-            return {
-                type: 'RECOVERY',
-                reason: `Recovery exit: +${profitPct.toFixed(1)}% profit after being in loss`,
                 paperTradeId: trade.id,
                 exitPrice: currentPrice,
             };
