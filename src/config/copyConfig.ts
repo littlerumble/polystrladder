@@ -87,12 +87,8 @@ export const COPY_CONFIG = {
     IGNORE: {
         MAX_PRICE: 0.90,          // Skip trades above 90%
         MIN_PRICE: 0.10,          // Skip trades below 10% (lottery)
-        // Markets to skip (e.g., esports)
-        SLUG_PATTERNS: [
-            'lol-',                 // League of Legends
-            'cs2-',                 // Counter-Strike
-            'valorant-',            // Valorant
-        ],
+        // Markets to skip (empty = allow all)
+        SLUG_PATTERNS: [],
     },
 };
 
