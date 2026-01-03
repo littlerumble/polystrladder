@@ -87,17 +87,25 @@ export class ExitManager {
             };
         }
 
-        // 2. Trailing take profit
+        // 2. Trailing take profit (dynamic: 3% normal, 2% for fast spikes)
         if (trailingActive && highWaterMark) {
             const dropFromPeak = ((highWaterMark - currentPrice) / highWaterMark) * 100;
+            const peakProfitPct = ((highWaterMark - entryPrice) / entryPrice) * 100;
 
-            if (dropFromPeak >= COPY_CONFIG.TAKE_PROFIT.TRAIL_PCT) {
+            // Detect "fast spike": if we hit 20%+ profit quickly, use tighter 2% trail
+            // Otherwise use normal 3% trail
+            const isFastSpike = peakProfitPct >= 20; // High profit = likely fast move
+            const trailPct = isFastSpike
+                ? (COPY_CONFIG.TAKE_PROFIT.TRAIL_PCT_FAST || 2)
+                : (COPY_CONFIG.TAKE_PROFIT.TRAIL_PCT || 3);
+
+            if (dropFromPeak >= trailPct) {
                 // SAFETY: Only exit if we're still in profit (at least MIN_PROFIT_PCT above entry)
                 const minProfitPct = COPY_CONFIG.TAKE_PROFIT.MIN_PROFIT_PCT || 0;
                 if (profitPct >= minProfitPct) {
                     return {
                         type: 'TP_TRAIL',
-                        reason: `Trailing stop hit: ${dropFromPeak.toFixed(1)}% drop from ${(highWaterMark * 100).toFixed(1)}% (profit: ${profitPct.toFixed(1)}%)`,
+                        reason: `${isFastSpike ? 'Fast spike' : 'Trailing'} stop: ${dropFromPeak.toFixed(1)}% drop from ${(highWaterMark * 100).toFixed(1)}% (trail: ${trailPct}%, profit: ${profitPct.toFixed(1)}%)`,
                         paperTradeId: trade.id,
                         exitPrice: currentPrice,
                     };

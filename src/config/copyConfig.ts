@@ -50,7 +50,9 @@ export const COPY_CONFIG = {
     // Take profit (trailing)
     TAKE_PROFIT: {
         TRIGGER_PCT: 12,      // Enable trailing when +12%
-        TRAIL_PCT: 2,         // Exit when drops 2% from peak (tighter trailing)
+        TRAIL_PCT: 3,         // Normal trailing: exit when drops 3% from peak
+        TRAIL_PCT_FAST: 2,    // Fast spike trailing: exit when drops 2% from peak
+        FAST_SPIKE_PCT: 5,    // Detect "fast spike" if price rises 5%+ in short time
         HARD_CAP_PRICE: 0.95, // Always exit at 95% (too risky above)
         MIN_PROFIT_PCT: 6,    // Never sell unless at least 6% profit
     },
