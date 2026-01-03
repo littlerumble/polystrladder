@@ -256,9 +256,10 @@ export class WhaleTracker {
             }
         }
 
-        // Check if market already exists
+        // Check if we're already tracking this specific TOKEN (outcome)
+        // Important: Use tokenId, not conditionId, because a single market has 2 tokens (Yes/No)
         let trackedMarket = await this.prisma.trackedMarket.findUnique({
-            where: { conditionId: trade.conditionId },
+            where: { tokenId: trade.asset },
         });
 
         if (!trackedMarket) {

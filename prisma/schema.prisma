@@ -8,17 +8,18 @@ generator client {
 }
 
 // Markets the whale is trading - we track these for prices and signals
+// NOTE: Each OUTCOME (tokenId) is tracked separately, not per conditionId
 model TrackedMarket {
   id              String   @id @default(uuid())
   
-  // From whale trade API (primary identifiers)
-  conditionId     String   @unique
+  // From whale trade API
+  conditionId     String   // shared by all outcomes in a market
   slug            String
   eventSlug       String?
   title           String   @db.Text
   
-  // Token info - CRITICAL: store the actual outcome name with the token
-  tokenId         String   @db.VarChar(100)  // the asset from whale trade
+  // Token info - CRITICAL: tokenId is unique per outcome (Yes vs No)
+  tokenId         String   @unique @db.VarChar(100)  // unique identifier for this outcome
   outcome         String                      // Yes, No, Over, Under, Team Name
   outcomeIndex    Int                         // 0 or 1
   
