@@ -59,7 +59,7 @@ export const COPY_CONFIG = {
 
     // Stop loss
     STOP_LOSS: {
-        TRIGGER_PCT: -20,     // Exit at -20%
+        TRIGGER_PCT: -40,     // Exit at -40%
     },
 
     // Other exit conditions
