@@ -50,8 +50,9 @@ export const COPY_CONFIG = {
     // Take profit (trailing)
     TAKE_PROFIT: {
         TRIGGER_PCT: 12,      // Enable trailing when +12%
-        TRAIL_PCT: 4,         // Exit when drops 4% from peak
+        TRAIL_PCT: 2,         // Exit when drops 2% from peak (tighter trailing)
         HARD_CAP_PRICE: 0.95, // Always exit at 95% (too risky above)
+        MIN_PROFIT_PCT: 6,    // Never sell unless at least 6% profit
     },
 
     // Stop loss
@@ -75,9 +76,9 @@ export const COPY_CONFIG = {
 
     // Polling intervals (milliseconds)
     POLLING: {
-        WHALE_TRADES_MS: 5000,    // Check for new whale trades every 5s
-        PRICE_UPDATE_MS: 2000,    // Update prices every 2s (user requested)
-        EXIT_CHECK_MS: 2000,      // Check exit conditions every 2s
+        WHALE_TRADES_MS: 1500,    // Check for new whale trades every 1.5s
+        PRICE_UPDATE_MS: 1500,    // Update prices every 1.5s
+        EXIT_CHECK_MS: 1500,      // Check exit conditions every 1.5s
     },
 
     // What to ignore

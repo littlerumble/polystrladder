@@ -38,7 +38,7 @@ export class PricePoller {
     }
 
     /**
-     * Update prices for all active tracked markets
+     * Update prices for all active tracked markets (parallelized)
      */
     async updateMarketPrices(): Promise<void> {
         // Get all active markets
@@ -49,23 +49,32 @@ export class PricePoller {
             },
         });
 
-        for (const market of markets) {
+        // Fetch all prices in parallel for efficiency
+        const pricePromises = markets.map(async (market) => {
             const price = await this.fetchPrice(market.tokenId);
+            return { market, price };
+        });
 
-            if (price !== null) {
-                await this.prisma.trackedMarket.update({
+        const results = await Promise.all(pricePromises);
+
+        // Update all markets (can also be parallelized)
+        const updatePromises = results
+            .filter(r => r.price !== null)
+            .map(({ market, price }) =>
+                this.prisma.trackedMarket.update({
                     where: { id: market.id },
                     data: {
                         currentPrice: price,
                         lastPriceUpdate: new Date(),
                     },
-                });
-            }
-        }
+                })
+            );
+
+        await Promise.all(updatePromises);
     }
 
     /**
-     * Update prices for all open paper trades and calculate P&L
+     * Update prices for all open paper trades and calculate P&L (parallelized)
      */
     async updateTradePrices(): Promise<void> {
         // Get all open trades with their market data
@@ -74,37 +83,39 @@ export class PricePoller {
             include: { market: true },
         });
 
-        for (const trade of trades) {
-            // Use market's current price (already updated above)
-            const currentPrice = trade.market.currentPrice;
+        // Process all trades in parallel
+        const updatePromises = trades
+            .filter(trade => trade.market?.currentPrice !== null)
+            .map(trade => {
+                const currentPrice = trade.market.currentPrice!;
 
-            if (currentPrice === null) continue;
+                // Calculate P&L
+                const unrealizedPnl = (currentPrice - trade.entryPrice) * trade.shares;
+                const unrealizedPct = (unrealizedPnl / trade.costBasis) * 100;
 
-            // Calculate P&L
-            const unrealizedPnl = (currentPrice - trade.entryPrice) * trade.shares;
-            const unrealizedPct = (unrealizedPnl / trade.costBasis) * 100;
+                // Update high water mark for trailing TP
+                const newHighWaterMark = Math.max(
+                    trade.highWaterMark || trade.entryPrice,
+                    currentPrice
+                );
 
-            // Update high water mark for trailing TP
-            const newHighWaterMark = Math.max(
-                trade.highWaterMark || trade.entryPrice,
-                currentPrice
-            );
+                // Check if trailing should be activated (+12%)
+                const profitPct = ((currentPrice - trade.entryPrice) / trade.entryPrice) * 100;
+                const shouldActivateTrailing = profitPct >= COPY_CONFIG.TAKE_PROFIT.TRIGGER_PCT;
 
-            // Check if trailing should be activated (+12%)
-            const profitPct = ((currentPrice - trade.entryPrice) / trade.entryPrice) * 100;
-            const shouldActivateTrailing = profitPct >= COPY_CONFIG.TAKE_PROFIT.TRIGGER_PCT;
-
-            await this.prisma.paperTrade.update({
-                where: { id: trade.id },
-                data: {
-                    currentPrice,
-                    unrealizedPnl,
-                    unrealizedPct,
-                    highWaterMark: newHighWaterMark,
-                    trailingActive: trade.trailingActive || shouldActivateTrailing,
-                },
+                return this.prisma.paperTrade.update({
+                    where: { id: trade.id },
+                    data: {
+                        currentPrice,
+                        unrealizedPnl,
+                        unrealizedPct,
+                        highWaterMark: newHighWaterMark,
+                        trailingActive: trade.trailingActive || shouldActivateTrailing,
+                    },
+                });
             });
-        }
+
+        await Promise.all(updatePromises);
     }
 
     /**

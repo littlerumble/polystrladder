@@ -92,12 +92,17 @@ export class ExitManager {
             const dropFromPeak = ((highWaterMark - currentPrice) / highWaterMark) * 100;
 
             if (dropFromPeak >= COPY_CONFIG.TAKE_PROFIT.TRAIL_PCT) {
-                return {
-                    type: 'TP_TRAIL',
-                    reason: `Trailing stop hit: ${dropFromPeak.toFixed(1)}% drop from ${(highWaterMark * 100).toFixed(1)}%`,
-                    paperTradeId: trade.id,
-                    exitPrice: currentPrice,
-                };
+                // SAFETY: Only exit if we're still in profit (at least MIN_PROFIT_PCT above entry)
+                const minProfitPct = COPY_CONFIG.TAKE_PROFIT.MIN_PROFIT_PCT || 0;
+                if (profitPct >= minProfitPct) {
+                    return {
+                        type: 'TP_TRAIL',
+                        reason: `Trailing stop hit: ${dropFromPeak.toFixed(1)}% drop from ${(highWaterMark * 100).toFixed(1)}% (profit: ${profitPct.toFixed(1)}%)`,
+                        paperTradeId: trade.id,
+                        exitPrice: currentPrice,
+                    };
+                }
+                // Else: trailing stop triggered but we're below min profit, hold position
             }
         }
 
