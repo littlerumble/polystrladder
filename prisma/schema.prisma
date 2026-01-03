@@ -80,6 +80,7 @@ model PaperTrade {
   // Trailing take profit
   highWaterMark   Float?             // highest price seen
   trailingActive  Boolean  @default(false)  // true when +12% triggered
+  wasInLoss       Boolean  @default(false)  // true if price ever dropped below entry
   
   // Exit details (filled when closed)
   exitPrice       Float?
