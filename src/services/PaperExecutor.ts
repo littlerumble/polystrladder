@@ -61,8 +61,12 @@ export class PaperExecutor {
     async executeL1Entry(market: TrackedMarket): Promise<PaperTrade | null> {
         const currentPrice = market.currentPrice ?? market.whalePrice;
 
-        // Only check that current price is still ≤ 85% (within our entry range)
-        // We buy even if price moved up from whale entry, as long as still in range
+        // Must be within our entry range (65-85%)
+        if (currentPrice < COPY_CONFIG.ENTRY.MIN_PRICE) {
+            console.log(`[PaperExecutor] Skip L1: price ${(currentPrice * 100).toFixed(1)}% < ${COPY_CONFIG.ENTRY.MIN_PRICE * 100}% min`);
+            return null;
+        }
+
         if (currentPrice > COPY_CONFIG.ENTRY.MAX_PRICE) {
             console.log(`[PaperExecutor] Skip L1: price ${(currentPrice * 100).toFixed(1)}% > ${COPY_CONFIG.ENTRY.MAX_PRICE * 100}% max`);
             return null;
